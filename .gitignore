@@ -1,0 +1,35 @@
+
+
+sugerencia para QR:
+La estructura ideal de la URL para los QR debería ser así:
+https://tuapp.com/clientes?mesa=5
+
+Si manejas múltiples bares en la misma aplicación, deberías incluir también el identificador del local:
+https://tuapp.com/clientes?comercio=tubar&mesa=5
+
+
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
