@@ -8,7 +8,7 @@ import "./Clientes.css";
 function Clientes({ alVolver }) {
   // --- CONFIGURACIÓN DE MESA (TEMPORAL / PRODUCCIÓN) ---
   const mesa = 8; // Temporal: Cambia este número para probar otras mesas en desarrollo
-  
+
   /* 
      PARA PRODUCCIÓN: Descomenta las líneas de abajo y borra la línea de arriba
      const { idMesa } = useParams(); 
@@ -33,10 +33,7 @@ function Clientes({ alVolver }) {
 
   if (categoriaSeleccionada === "cuenta") {
     return (
-      <Cuenta 
-        mesa={mesa} 
-        alVolver={() => setCategoriaSeleccionada(null)} 
-      />
+      <Cuenta mesa={mesa} alVolver={() => setCategoriaSeleccionada(null)} />
     );
   } else if (categoriaSeleccionada) {
     return (
@@ -67,7 +64,11 @@ function Clientes({ alVolver }) {
             </p>
           ))}
         </div>
-        <p className="opciones" id="cuenta" onClick={() => setCategoriaSeleccionada("cuenta")}>
+        <p
+          className="opciones"
+          id="cuenta"
+          onClick={() => setCategoriaSeleccionada("cuenta")}
+        >
           CUENTA
         </p>
       </div>
