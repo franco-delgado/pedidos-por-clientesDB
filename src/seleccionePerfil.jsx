@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route, useNavigate } from "react-router-dom";
 
 // Importación de componentes de Clientes y Administración
 import Clientes from "./clientes/Clientes";
-import Administracion from "./administracion/administracion";
+import Administracion from "./administracion/Administracion";
 import Precios from "./administracion/Precios";
 import Pedidos from "./administracion/Pedidos";
 import Caja from "./administracion/caja/Caja";
