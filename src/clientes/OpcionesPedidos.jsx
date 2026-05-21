@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { supabase } from "../lib/supabase";
+import FooterComponent from "../FooterComponent";
 import "./Clientes.css";
 
 function OpcionesPedidos({ categoria, alVolver }) {
@@ -142,7 +143,7 @@ function OpcionesPedidos({ categoria, alVolver }) {
         "nombre-pedido": item.nombre, // Tu columna 2 (text)
         "cantidad-pedida": item.cantidad, // Tu columna 3 (number)
         precio_unitario: item.precio_unitario, // Tu columna 4 (number)
-        espacio: "pedido_nuevo" // <--- ESTA ES LA CLAVE PARA EL COLOR ROJO
+        espacio: "pedido_nuevo", // <--- ESTA ES LA CLAVE PARA EL COLOR ROJO
       }));
 
       // 2. Insertar en la base de datos
@@ -200,20 +201,19 @@ function OpcionesPedidos({ categoria, alVolver }) {
             key={prod.id}
             className={`item-editar ${prod.stock <= 0 ? "sin-stock" : ""}`}
           >
-
             {/* 1. LA FOTO VA PRIMERO (A la izquierda) */}
-      <div className="foto-producto-contenedor">
-        {prod.imagen_url ? (
-          <img 
-            src={prod.imagen_url} 
-            alt={prod.nombre} 
-            className="producto-foto-cliente" 
-          />
-        ) : (
-          <div className="producto-sin-foto">📸</div>
-        )}
-      </div>
-            
+            <div className="foto-producto-contenedor">
+              {prod.imagen_url ? (
+                <img
+                  src={prod.imagen_url}
+                  alt={prod.nombre}
+                  className="producto-foto-cliente"
+                />
+              ) : (
+                <div className="producto-sin-foto">📸</div>
+              )}
+            </div>
+
             <button
               className="opciones"
               onClick={() => abrirModal(prod)}
@@ -322,6 +322,9 @@ function OpcionesPedidos({ categoria, alVolver }) {
           </div>
         </div>
       )}
+      <div className="footer">
+        <FooterComponent />
+      </div>
     </div>
   );
 }

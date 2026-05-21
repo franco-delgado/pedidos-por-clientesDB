@@ -2,7 +2,7 @@ import { useState } from "react";
 // import { useParams } from "react-router-dom"; // <-- DESCOMENTAR EN PRODUCCIÓN
 import OpcionesPedidos from "./OpcionesPedidos";
 import Cuenta from "./Cuenta";
-import Footer from "../Footer";
+import FooterComponent from "../FooterComponent";
 import "./Clientes.css";
 
 function Clientes({ alVolver }) {
@@ -73,7 +73,7 @@ function Clientes({ alVolver }) {
         </p>
       </div>
       <div className="footer">
-        <Footer />
+        <FooterComponent />
       </div>
     </>
   );
