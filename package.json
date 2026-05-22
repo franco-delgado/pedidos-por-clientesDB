@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/android": "^8.3.4",
     "@supabase/supabase-js": "^2.105.4",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
@@ -17,6 +18,8 @@
   },
   "devDependencies": {
     "@babel/core": "^7.29.0",
+    "@capacitor/cli": "^8.3.4",
+    "@capacitor/core": "^8.3.4",
     "@eslint/js": "^10.0.1",
     "@rolldown/plugin-babel": "^0.2.3",
     "@types/react": "^19.2.14",
