@@ -8,19 +8,39 @@ function Pedidos({ setMesaSeleccionada }) {
   const [estadoMesas, setEstadoMesas] = useState({});
   const navigate = useNavigate();
 
-  const esAlertaRoja = (p) =>
-    p.espacio === "pedido_nuevo" ||
-    p.espacio === 2 ||
-    p["nombre-pedido"] === "SOLICITUD DE CUENTA";
+  // Control seguro: añadimos juego de llaves opcional (?.) o valores por defecto
+  // para evitar que p.espacio o p["nombre-pedido"] tiren error si vienen vacíos.
+  const esAlertaRoja = (p) => {
+    if (!p) return false;
+    return (
+      p.espacio === "pedido_nuevo" ||
+      p.espacio === 2 ||
+      p["nombre-pedido"] === "SOLICITUD DE CUENTA"
+    );
+  };
 
   const procesarEstados = (datos) => {
+    // Nos aseguramos de que 'datos' sea un array válido antes de operar
+    if (!datos || !Array.isArray(datos)) return;
+
     const mapeo = Object.fromEntries(mesas.map((num) => [num, "libre"]));
+
     datos.forEach((p) => {
+      // Validamos que el pedido exista y tenga un número de mesa válido
+      if (!p || p.mesa === undefined || p.mesa === null) return;
+
+      // Si la mesa del pedido no está en nuestro rango de mesas (1 al 13), lo ignoramos
+      if (!mapeo.hasOwnProperty(p.mesa)) return;
+
       if (mapeo[p.mesa] === "pedido_nuevo") return;
-      if (esAlertaRoja(p)) mapeo[p.mesa] = "pedido_nuevo";
-      else if (p.espacio === "ocupada" || p.espacio === 1)
+
+      if (esAlertaRoja(p)) {
+        mapeo[p.mesa] = "pedido_nuevo";
+      } else if (p.espacio === "ocupada" || p.espacio === 1) {
         mapeo[p.mesa] = "ocupada";
+      }
     });
+
     setEstadoMesas(mapeo);
   };
 
@@ -31,8 +51,6 @@ function Pedidos({ setMesaSeleccionada }) {
     if (!error && data) procesarEstados(data);
   };
 
-  // Se eliminó el useEffect del sonido.
-  // Ahora este useEffect solo gestiona la carga inicial y la suscripción en tiempo real para refrescar la pantalla.
   useEffect(() => {
     cargarPedidos();
     const canal = supabase
@@ -54,8 +72,6 @@ function Pedidos({ setMesaSeleccionada }) {
   const irAMesa = async (num) => {
     setMesaSeleccionada(num);
 
-    // CORRECCIÓN: Se cambió .not("nombre-pedido", "eq", ...) por .neq()
-    // Esto evita que tire error de argumentos inválidos en el cliente de Supabase.
     await supabase
       .from("pedidos_clientes")
       .update({ espacio: "ocupada" })
