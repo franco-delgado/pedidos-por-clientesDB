@@ -8,8 +8,6 @@ function Pedidos({ setMesaSeleccionada }) {
   const [estadoMesas, setEstadoMesas] = useState({});
   const navigate = useNavigate();
 
-  // Control seguro: añadimos juego de llaves opcional (?.) o valores por defecto
-  // para evitar que p.espacio o p["nombre-pedido"] tiren error si vienen vacíos.
   const esAlertaRoja = (p) => {
     if (!p) return false;
     return (
@@ -20,18 +18,12 @@ function Pedidos({ setMesaSeleccionada }) {
   };
 
   const procesarEstados = (datos) => {
-    // Nos aseguramos de que 'datos' sea un array válido antes de operar
     if (!datos || !Array.isArray(datos)) return;
-
     const mapeo = Object.fromEntries(mesas.map((num) => [num, "libre"]));
 
     datos.forEach((p) => {
-      // Validamos que el pedido exista y tenga un número de mesa válido
       if (!p || p.mesa === undefined || p.mesa === null) return;
-
-      // Si la mesa del pedido no está en nuestro rango de mesas (1 al 13), lo ignoramos
       if (!mapeo.hasOwnProperty(p.mesa)) return;
-
       if (mapeo[p.mesa] === "pedido_nuevo") return;
 
       if (esAlertaRoja(p)) {
@@ -52,14 +44,48 @@ function Pedidos({ setMesaSeleccionada }) {
   };
 
   useEffect(() => {
+    // 1. Carga inicial de la página
     cargarPedidos();
+
+    // 2. Escucha en tiempo real optimizada para evitar colgar el celular
     const canal = supabase
       .channel("room-pedidos")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "pedidos_clientes" },
-        async () => {
-          await cargarPedidos();
+        (payload) => {
+          // En lugar de hacer un 'await cargarPedidos()' que tilda el móvil,
+          // manejamos el cambio de estado directamente con la información que envió Supabase
+          if (
+            payload.eventType === "INSERT" ||
+            payload.eventType === "UPDATE"
+          ) {
+            const nuevoPedido = payload.new;
+
+            if (nuevoPedido && nuevoPedido.mesa) {
+              setEstadoMesas((prevEstado) => {
+                const nuevoEstado = { ...prevEstado };
+
+                // Aplicamos las mismas reglas de negocio de forma local e instantánea
+                if (nuevoEstado[nuevoPedido.mesa] !== "pedido_nuevo") {
+                  if (esAlertaRoja(nuevoPedido)) {
+                    nuevoEstado[nuevoPedido.mesa] = "pedido_nuevo";
+                  } else if (
+                    nuevoPedido.espacio === "ocupada" ||
+                    nuevoPedido.espacio === 1
+                  ) {
+                    nuevoEstado[nuevoPedido.mesa] = "ocupada";
+                  } else if (nuevoPedido.espacio === "libre") {
+                    nuevoEstado[nuevoPedido.mesa] = "libre";
+                  }
+                }
+                return nuevoEstado;
+              });
+            }
+          } else {
+            // Si se borra un pedido o pasa algo raro, refrescamos de forma segura
+            cargarPedidos();
+          }
         },
       )
       .subscribe();
