@@ -53,11 +53,15 @@ function Pedidos({ setMesaSeleccionada }) {
 
   const irAMesa = async (num) => {
     setMesaSeleccionada(num);
+
+    // CORRECCIÓN: Se cambió .not("nombre-pedido", "eq", ...) por .neq()
+    // Esto evita que tire error de argumentos inválidos en el cliente de Supabase.
     await supabase
       .from("pedidos_clientes")
       .update({ espacio: "ocupada" })
       .eq("mesa", num)
-      .not("nombre-pedido", "eq", "SOLICITUD DE CUENTA");
+      .neq("nombre-pedido", "SOLICITUD DE CUENTA");
+
     navigate("/DetalleMesas");
   };
 
