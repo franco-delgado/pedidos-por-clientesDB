@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Fondo azul plano adaptado a pantallas de alta densidad -->
+  <rect width="512" height="512" fill="#4baaf7" />
+
+  <!-- Grupo contenedor centrado con margen de seguridad para evitar recortes en Android/iOS -->
+  <g transform="translate(36, 36) scale(0.86)">
+    
+    <!-- Aquí dentro va el diseño de tu planeta y las letras 'd' y 'b' -->
+    <!-- [Tus paths de las letras y el mundo aquí] -->
+    
+  </g>
+</svg>
