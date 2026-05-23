@@ -1,12 +1,19 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { supabase } from "../lib/supabase";
 import { useNavigate } from "react-router-dom";
 import "./administracion.css";
+
+// Importamos el archivo de audio.
+// Nota: Si usas Vite o Create React App, asegúrate de colocar 'alerta.mp3' en la carpeta 'public'
+import sonidoAlerta from "/alerta.mp3";
 
 function Pedidos({ setMesaSeleccionada }) {
   const mesas = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
   const [estadoMesas, setEstadoMesas] = useState({});
   const navigate = useNavigate();
+
+  // Guardamos la referencia del audio para no recrearla en cada renderizado
+  const audioRef = useRef(new Audio(sonidoAlerta));
 
   const esAlertaRoja = (p) => {
     if (!p) return false;
@@ -18,6 +25,21 @@ function Pedidos({ setMesaSeleccionada }) {
     );
   };
 
+  // Función para hacer sonar la alerta
+  const reproducirAlerta = () => {
+    try {
+      audioRef.current.currentTime = 0; // Reinicia el audio por si ya estaba sonando
+      audioRef.current.play().catch((error) => {
+        console.log(
+          "El navegador móvil bloqueó el audio temporalmente hasta que interactúes:",
+          error,
+        );
+      });
+    } catch (err) {
+      console.error("Error al reproducir sonido:", err);
+    }
+  };
+
   const procesarEstados = (datos) => {
     if (!datos || !Array.isArray(datos)) return;
     const mapeo = Object.fromEntries(mesas.map((num) => [num, "libre"]));
@@ -26,11 +48,9 @@ function Pedidos({ setMesaSeleccionada }) {
       if (!p || p.mesa === undefined || p.mesa === null) return;
       if (!mapeo.hasOwnProperty(p.mesa)) return;
 
-      // ELIMINADO EL BLOQUEO: Evaluamos el estado real más crítico actual
       if (esAlertaRoja(p)) {
         mapeo[p.mesa] = "pedido_nuevo";
       } else if (p.espacio === "ocupada" || p.espacio === 1) {
-        // Solo cambiamos a ocupada si no estaba previamente marcada como pedido nuevo en este bucle
         if (mapeo[p.mesa] !== "pedido_nuevo") {
           mapeo[p.mesa] = "ocupada";
         }
@@ -49,6 +69,21 @@ function Pedidos({ setMesaSeleccionada }) {
 
   useEffect(() => {
     cargarPedidos();
+
+    // TRUCO PARA MÓVILES: Desbloquear el canal de audio al primer toque en la pantalla
+    const desbloquearAudioEnMovil = () => {
+      audioRef.current
+        .play()
+        .then(() => {
+          audioRef.current.pause(); // Lo pausamos de inmediato, ya quedó desbloqueado
+          audioRef.current.currentTime = 0;
+        })
+        .catch(() => {});
+
+      // Removemos el listener para que no se ejecute siempre
+      document.removeEventListener("click", desbloquearAudioEnMovil);
+    };
+    document.addEventListener("click", desbloquearAudioEnMovil);
 
     const canal = supabase
       .channel("room-pedidos")
@@ -70,10 +105,15 @@ function Pedidos({ setMesaSeleccionada }) {
               ) {
                 const mesaId = nuevoPedido.mesa;
 
+                // CONEXIÓN CON LA ALERTA SONORA:
+                // Si el cambio actual califica como alerta roja, disparamos el sonido
+                if (esAlertaRoja(nuevoPedido)) {
+                  reproducirAlerta();
+                }
+
                 setEstadoMesas((prevEstado) => {
                   const nuevoEstado = { ...prevEstado };
 
-                  // ELIMINADO EL IF BLOQUEADOR: Ahora permitimos actualizar el estado directamente
                   if (esAlertaRoja(nuevoPedido)) {
                     nuevoEstado[mesaId] = "pedido_nuevo";
                   } else if (
@@ -101,14 +141,12 @@ function Pedidos({ setMesaSeleccionada }) {
 
     return () => {
       supabase.removeChannel(canal);
+      document.removeEventListener("click", desbloquearAudioEnMovil);
     };
   }, []);
 
   const irAMesa = async (num) => {
     setMesaSeleccionada(num);
-
-    // Forzamos el cambio visual en el estado local de inmediato (Optimistic UI)
-    // para que la app se sienta instantánea en el celular antes de viajar a la otra pantalla
     setEstadoMesas((prev) => ({ ...prev, [num]: "ocupada" }));
 
     await supabase

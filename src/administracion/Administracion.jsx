@@ -1,22 +1,21 @@
-import { BrowserRouter, Routes, Route, useNavigate } from "react-router-dom";
-import { useState, useEffect } from "react";
-import { supabase } from "../lib/supabase"; // Verifica que apunte bien a tu archivo de supabase
-import Caja from "./caja/Caja";
-import Pedidos from "./Pedidos";
-import Precios from "./Precios";
+import { useNavigate } from "react-router-dom";
+import { useState, useEffect, useRef } from "react";
+import { supabase } from "../lib/supabase";
 
-// CORREGIDO: Ruta directa a la raíz pública
-const sonidoAlerta = new Audio("../../public/alerta.mp3");
-// CORREGIDO: Importación nativa de Vite para que resuelva la ruta del archivo sin fallos
-import archivoAudio from "../../public/alerta.mp3";
-
-// Instanciamos el audio usando el archivo importado
+// CORREGIDO: En Vite, los archivos de la carpeta /public se llaman directamente desde la raíz "/"
+import archivoAudio from "/alerta.mp3";
 
 // Función auxiliar para detectar si el pedido es una alerta roja
-const esAlertaRoja = (p) =>
-  p.espacio === "pedido_nuevo" ||
-  p.espacio === 2 ||
-  p["nombre-pedido"] === "SOLICITUD DE CUENTA";
+const esAlertaRoja = (p) => {
+  if (!p) return false;
+  // Protección para guiones medios o bajos según el formato de la base de datos
+  const nombrePedido = p["nombre-pedido"] || p["nombre_pedido"] || "";
+  return (
+    p.espacio === "pedido_nuevo" ||
+    p.espacio === 2 ||
+    nombrePedido === "SOLICITUD DE CUENTA"
+  );
+};
 
 // Componente para el botón de volver (reutilizable)
 const BotonVolver = () => {
@@ -27,11 +26,29 @@ const BotonVolver = () => {
 function Administracion() {
   const navigate = useNavigate();
 
+  // CORREGIDO: Usamos useRef para mantener una única instancia del audio con la ruta correcta
+  const audioRef = useRef(new Audio(archivoAudio));
+
   useEffect(() => {
     // 1. Solicitar permiso para las notificaciones del sistema
     if (Notification.permission === "default") {
       Notification.requestPermission();
     }
+
+    // TRUCO PARA MÓVILES: Desbloquear el canal de audio del celular al primer toque en la pantalla
+    const desbloquearAudioEnMovil = () => {
+      audioRef.current
+        .play()
+        .then(() => {
+          audioRef.current.pause(); // Lo pausamos de inmediato, ya quedó autorizado por el navegador
+          audioRef.current.currentTime = 0;
+        })
+        .catch((err) => console.log("Esperando interacción activa:", err));
+
+      // Removemos el evento para que no se ejecute en cada clic posterior
+      document.removeEventListener("click", desbloquearAudioEnMovil);
+    };
+    document.addEventListener("click", desbloquearAudioEnMovil);
 
     // 2. Escuchar cambios globales en tiempo real
     const canal = supabase
@@ -60,28 +77,35 @@ function Administracion() {
 
     return () => {
       supabase.removeChannel(canal);
+      document.removeEventListener("click", desbloquearAudioEnMovil);
     };
   }, []);
 
   const ejecutarAlerta = (pedido) => {
-    // Reproducir sonido
-    sonidoAlerta.currentTime = 0;
-    sonidoAlerta
-      .play()
-      .catch((e) =>
-        console.log(
-          "Audio bloqueado por el navegador hasta que interactúes con la página:",
-          e,
-        ),
-      );
+    // CORREGIDO: Reproducir sonido usando la referencia mutada de forma segura
+    try {
+      audioRef.current.currentTime = 0;
+      audioRef.current
+        .play()
+        .catch((e) =>
+          console.log(
+            "Audio bloqueado por el navegador hasta que interactúes con la página:",
+            e,
+          ),
+        );
+    } catch (audioError) {
+      console.error("Error al reproducir el archivo de audio:", audioError);
+    }
 
     // Notificación de escritorio si está minimizado
     if (document.hidden && Notification.permission === "granted") {
+      const nombrePedido =
+        pedido["nombre-pedido"] || pedido["nombre_pedido"] || "";
       new Notification(`🚨 ¡Alerta Mesa ${pedido.mesa}!`, {
         body:
-          pedido["nombre-pedido"] === "SOLICITUD DE CUENTA"
+          nombrePedido === "SOLICITUD DE CUENTA"
             ? "¡Están pidiendo la cuenta!"
-            : `Nuevo pedido: ${pedido["nombre-pedido"] || "Ver detalles"}`,
+            : `Nuevo pedido: ${nombrePedido || "Ver detalles"}`,
         icon: "/favicon.svg",
       });
     }
