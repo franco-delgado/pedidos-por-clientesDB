@@ -2,8 +2,8 @@ import { useNavigate } from "react-router-dom";
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "../lib/supabase";
 
-// CORREGIDO: En Vite, los archivos de la carpeta /public se llaman directamente desde la raíz "/"
-import archivoAudio from "/alerta.mp3";
+// Vite inyectará correctamente la base del sitio o la ruta local del WebView de Android
+const archivoAudio = "./alerta.mp3";
 
 // Función auxiliar para detectar si el pedido es una alerta roja
 const esAlertaRoja = (p) => {
