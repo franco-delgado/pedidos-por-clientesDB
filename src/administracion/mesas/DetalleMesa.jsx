@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabase";
+import { emitirImpresionMesa } from "../../impresora/ticketService"; // <- IMPORTANTE: Importamos el nuevo servicio
 import "./DetallesMesa.css";
 
 function DetalleMesa({ idMesa }) {
   const [datosPedido, setDatosPedido] = useState([]);
   const [cargando, setCargando] = useState(false);
 
-  // Función para cargar los pedidos de la mesa
   const cargarDetalle = async () => {
     if (!idMesa) return;
 
@@ -22,48 +22,66 @@ function DetalleMesa({ idMesa }) {
     cargarDetalle();
   }, [idMesa]);
 
-  // CORREGIDO: Ahora sí multiplica el precio por la cantidad pedida de cada producto
   const calcularTotalMesa = () => {
     return datosPedido.reduce((acumulador, item) => {
       const cantidad = Number(item["cantidad-pedida"]) || 0;
       const precio = Number(item["precio_unitario"]) || 0;
-      return acumulador + (precio * cantidad); 
+      return acumulador + precio * cantidad;
     }, 0);
   };
 
-  // Función para procesar el pago, guardar en caja y limpiar la mesa
   const gestionarPago = async () => {
     if (datosPedido.length === 0) return;
 
+    const totalMesa = calcularTotalMesa();
+
+    // 1. Preguntamos primero si desea emitir el ticket
+    const quiereImprimir = window.confirm(
+      "¿Deseas imprimir el ticket de consumo para esta mesa?",
+    );
+
+    if (quiereImprimir) {
+      try {
+        emitirImpresionMesa(idMesa, datosPedido, totalMesa);
+      } catch (err) {
+        console.error("Error al generar la impresión del ticket:", err);
+        const procederSinTicket = window.confirm(
+          "Ocurrió un problema con la impresora. ¿Deseas proceder con el cobro en caja igualmente?",
+        );
+        // Si hay error en la impresora y el usuario cancela, frenamos todo
+        if (!procederSinTicket) return;
+      }
+    }
+
+    // 2. Ahora sí, confirmamos el cobro definitivo y vaciado de mesa
     const confirmar = window.confirm(
-      `¿Estás seguro de cobrar el total de $${calcularTotalMesa()} y vaciar la mesa ${idMesa}?`,
+      `¿Estás seguro de cobrar el total de $${totalMesa} y vaciar la mesa ${idMesa}?`,
     );
     if (!confirmar) return;
 
     setCargando(true);
 
     try {
-      // 1. Preparar las filas que vamos a insertar en la tabla 'caja'
       const filasCaja = datosPedido.map((item) => {
         const cantidad = Number(item["cantidad-pedida"]) || 0;
         const precioUnitario = Number(item["precio_unitario"]) || 0;
 
         return {
           nombre_pedido: item["nombre-pedido"],
-          precio_pedido: precioUnitario * cantidad, // Guardamos el valor total real del item en caja
+          precio_pedido: precioUnitario * cantidad,
           cantidad_pedido: cantidad,
           mesa: Number(idMesa),
         };
       });
 
-      // 2. Insertar registros en la tabla 'caja'
+      // Insertar en la tabla caja
       const { error: errorInsert } = await supabase
         .from("caja")
         .insert(filasCaja);
 
       if (errorInsert) throw errorInsert;
 
-      // 3. Si se guardó bien en caja, eliminamos los pedidos de esta mesa
+      // Borrar pedidos de la mesa
       const { error: errorDelete } = await supabase
         .from("pedidos_clientes")
         .delete()
@@ -72,8 +90,6 @@ function DetalleMesa({ idMesa }) {
       if (errorDelete) throw errorDelete;
 
       alert("¡Cuenta cobrada con éxito y registrada en caja!");
-
-      // 4. Limpiamos el estado local para reflejar que la mesa quedó vacía
       setDatosPedido([]);
     } catch (error) {
       console.error("Error en el proceso de cobro:", error);
@@ -84,7 +100,9 @@ function DetalleMesa({ idMesa }) {
   };
 
   return (
-    <div style={{ padding: "15px", border: "1px solid #ddd", borderRadius: "8px" }}>
+    <div
+      style={{ padding: "15px", border: "1px solid #ddd", borderRadius: "8px" }}
+    >
       <h2>Detalle de Mesa {idMesa}</h2>
 
       {datosPedido.length > 0 ? (
@@ -110,7 +128,6 @@ function DetalleMesa({ idMesa }) {
             <strong>Total a Pagar:</strong> ${calcularTotalMesa().toFixed(2)}
           </p>
 
-          {/* Botón para efectuar el cobro */}
           <button
             onClick={gestionarPago}
             disabled={cargando}
