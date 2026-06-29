@@ -1,14 +1,13 @@
+// src/administracion/Administracion.jsx
 import { useNavigate } from "react-router-dom";
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "../lib/supabase";
 
-// Vite inyectará correctamente la base del sitio o la ruta local del WebView de Android
-const archivoAudio = "./alerta.mp3";
+// Ruta absoluta apuntando a tu archivo en la carpeta 'public'
+const archivoAudio = "/alerta.mp3";
 
-// Función auxiliar para detectar si el pedido es una alerta roja
 const esAlertaRoja = (p) => {
   if (!p) return false;
-  // Protección para guiones medios o bajos según el formato de la base de datos
   const nombrePedido = p["nombre-pedido"] || p["nombre_pedido"] || "";
   return (
     p.espacio === "pedido_nuevo" ||
@@ -17,59 +16,126 @@ const esAlertaRoja = (p) => {
   );
 };
 
-// Componente para el botón de volver (reutilizable)
-const BotonVolver = () => {
-  const navigate = useNavigate();
-  return <button onClick={() => navigate(-1)}>Volver</button>;
-};
-
 function Administracion() {
   const navigate = useNavigate();
+  const mesas = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
 
-  // CORREGIDO: Usamos useRef para mantener una única instancia del audio con la ruta correcta
+  // ESTADO GLOBAL DE LAS MESAS (VIVE AQUÍ)
+  const [estadoMesas, setEstadoMesas] = useState({});
   const audioRef = useRef(new Audio(archivoAudio));
 
+  const reproducirAlerta = () => {
+    try {
+      audioRef.current.currentTime = 0;
+      audioRef.current
+        .play()
+        .catch((e) => console.log("Audio esperando interacción activa:", e));
+    } catch (audioError) {
+      console.error("Error al reproducir el archivo de audio:", audioError);
+    }
+  };
+
+  const cargarPedidosGlobal = async () => {
+    const { data, error } = await supabase
+      .from("pedidos_clientes")
+      .select("mesa, nombre-pedido, espacio");
+
+    if (!error && data) {
+      const mapeo = Object.fromEntries(mesas.map((num) => [num, "libre"]));
+      data.forEach((p) => {
+        if (!p || p.mesa === undefined || p.mesa === null) return;
+        if (esAlertaRoja(p)) {
+          mapeo[p.mesa] = "pedido_nuevo";
+        } else if (p.espacio === "ocupada" || p.espacio === 1) {
+          if (mapeo[p.mesa] !== "pedido_nuevo") {
+            mapeo[p.mesa] = "ocupada";
+          }
+        }
+      });
+      setEstadoMesas(mapeo);
+    }
+  };
+
   useEffect(() => {
-    // 1. Solicitar permiso para las notificaciones del sistema
+    // Inicializar datos
+    cargarPedidosGlobal();
+
     if (Notification.permission === "default") {
       Notification.requestPermission();
     }
 
-    // TRUCO PARA MÓVILES: Desbloquear el canal de audio del celular al primer toque en la pantalla
+    // Desbloqueo de audio para móviles (iOS/Android)
     const desbloquearAudioEnMovil = () => {
       audioRef.current
         .play()
         .then(() => {
-          audioRef.current.pause(); // Lo pausamos de inmediato, ya quedó autorizado por el navegador
+          audioRef.current.pause();
           audioRef.current.currentTime = 0;
+          limpiarEventosDesbloqueo();
+          console.log("Canal de audio autorizado.");
         })
-        .catch((err) => console.log("Esperando interacción activa:", err));
-
-      // Removemos el evento para que no se ejecute en cada clic posterior
-      document.removeEventListener("click", desbloquearAudioEnMovil);
+        .catch(() => {});
     };
-    document.addEventListener("click", desbloquearAudioEnMovil);
 
-    // 2. Escuchar cambios globales en tiempo real
+    const limpiarEventosDesbloqueo = () => {
+      document.removeEventListener("click", desbloquearAudioEnMovil);
+      document.removeEventListener("touchstart", desbloquearAudioEnMovil);
+    };
+
+    document.addEventListener("click", desbloquearAudioEnMovil);
+    document.addEventListener("touchstart", desbloquearAudioEnMovil);
+
+    // ESCUCHA PERSISTENTE: Se ejecuta siempre en segundo plano en esta sección
     const canal = supabase
-      .channel("alertas-administracion")
+      .channel("alertas-globales-administracion")
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "pedidos_clientes" },
+        { event: "*", schema: "public", table: "pedidos_clientes" },
         (payload) => {
-          const nuevoPedido = payload.new;
-          if (esAlertaRoja(nuevoPedido)) {
-            ejecutarAlerta(nuevoPedido);
-          }
-        },
-      )
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "pedidos_clientes" },
-        (payload) => {
-          const pedidoModificado = payload.new;
-          if (esAlertaRoja(pedidoModificado)) {
-            ejecutarAlerta(pedidoModificado);
+          if (
+            payload.eventType === "INSERT" ||
+            payload.eventType === "UPDATE"
+          ) {
+            const nuevoPedido = payload.new;
+            if (nuevoPedido && "mesa" in nuevoPedido) {
+              // SIEMPRE SONARÁ, no importa si estás viendo el menú principal o subventanas
+              if (esAlertaRoja(nuevoPedido)) {
+                reproducirAlerta();
+
+                // Notificación nativa por si minimizaste el navegador
+                if (document.hidden && Notification.permission === "granted") {
+                  const nombrePedido =
+                    nuevoPedido["nombre-pedido"] ||
+                    nuevoPedido["nombre_pedido"] ||
+                    "";
+                  new Notification(`🚨 ¡Alerta Mesa ${nuevoPedido.mesa}!`, {
+                    body:
+                      nombrePedido === "SOLICITUD DE CUENTA"
+                        ? "¡Piden la cuenta!"
+                        : `Pedido: ${nombrePedido}`,
+                    icon: "/favicono.svg",
+                  });
+                }
+              }
+
+              // Actualizamos el estado compartido de las mesas
+              setEstadoMesas((prevEstado) => {
+                const nuevoEstado = { ...prevEstado };
+                if (esAlertaRoja(nuevoPedido)) {
+                  nuevoEstado[nuevoPedido.mesa] = "pedido_nuevo";
+                } else if (
+                  nuevoPedido.espacio === "ocupada" ||
+                  nuevoPedido.espacio === 1
+                ) {
+                  nuevoEstado[nuevoPedido.mesa] = "ocupada";
+                } else if (nuevoPedido.espacio === "libre") {
+                  nuevoEstado[nuevoPedido.mesa] = "libre";
+                }
+                return nuevoEstado;
+              });
+            }
+          } else {
+            cargarPedidosGlobal();
           }
         },
       )
@@ -77,58 +143,31 @@ function Administracion() {
 
     return () => {
       supabase.removeChannel(canal);
-      document.removeEventListener("click", desbloquearAudioEnMovil);
+      limpiarEventosDesbloqueo();
     };
   }, []);
-
-  const ejecutarAlerta = (pedido) => {
-    // CORREGIDO: Reproducir sonido usando la referencia mutada de forma segura
-    try {
-      audioRef.current.currentTime = 0;
-      audioRef.current
-        .play()
-        .catch((e) =>
-          console.log(
-            "Audio bloqueado por el navegador hasta que interactúes con la página:",
-            e,
-          ),
-        );
-    } catch (audioError) {
-      console.error("Error al reproducir el archivo de audio:", audioError);
-    }
-
-    // Notificación de escritorio si está minimizado
-    if (document.hidden && Notification.permission === "granted") {
-      const nombrePedido =
-        pedido["nombre-pedido"] || pedido["nombre_pedido"] || "";
-      new Notification(`🚨 ¡Alerta Mesa ${pedido.mesa}!`, {
-        body:
-          nombrePedido === "SOLICITUD DE CUENTA"
-            ? "¡Están pidiendo la cuenta!"
-            : `Nuevo pedido: ${nombrePedido || "Ver detalles"}`,
-        icon: "/favicon.svg",
-      });
-    }
-  };
 
   return (
     <>
       <h2>BIENVENIDO ADMINISTRADOR</h2>
       <p className="text">
         En la opcion MODIFICAR PRECIOS podra agregar opciones o modificar los
-        precios. En la opcion PEDIDOS usted podra ver los pedidos de los
-        clientes si antes de llegar a este punto usted ya ingreso en la opcion
-        SER CLIENTE podra ver su pedido. En la opcion cerrar caja podremos ver
-        el total que se rea que se vendio por cada mesa en la jornada.
+        precios...
       </p>
 
       <div className="contenedor-externo">
         <button className="boton" onClick={() => navigate("/precios")}>
           modificar precios
         </button>
-        <button className="boton" onClick={() => navigate("/pedidos")}>
+
+        {/* CORRECCIÓN: Al navegar a pedidos, le enviamos los datos actuales de las mesas por 'state' */}
+        <button
+          className="boton"
+          onClick={() => navigate("/pedidos", { state: { estadoMesas } })}
+        >
           pedidos
         </button>
+
         <button className="boton" onClick={() => navigate("/caja")}>
           cerrar caja
         </button>

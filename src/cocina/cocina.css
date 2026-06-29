@@ -1,0 +1,33 @@
+.pedidos-container {
+  height: 20px;
+  width: 80%;
+} /* Estilo base para cada tarjeta de pedido */
+.pedidos {
+  width: 98%;
+  margin-left: 2%;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  padding: 15px;
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
+  /*  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  background-color: #f8f9fa; /* Fondo por defecto (pedido viejo/atendido) *
+  transition: background-color 0.3s ease;*/
+}
+
+/* Variante exclusiva para cuando el pedido es nuevo */
+.pedido-card.nuevo {
+  background-color: #fff3cd; /* Fondo amarillo */
+}
+.h3-cocina {
+  margin: 0 0 10px 0;
+}
+.nombre-pedido {
+  margin: 5px 0;
+}
+.cantidad-pedido {
+  margin: 5px 0;
+}

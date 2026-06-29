@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, useNavigate } from "react-router-dom";
+import { supabase } from "./lib/supabase";
 
 // Importación de componentes de Clientes y Administración
 import Clientes from "./clientes/Clientes";
@@ -8,7 +9,13 @@ import Precios from "./administracion/Precios";
 import Pedidos from "./administracion/Pedidos";
 import Caja from "./administracion/caja/Caja";
 import ModificarOpciones from "./administracion/modificarOpciones";
-import DetalleMesa from "./administracion/mesas/DetalleMesa"; // Verifica que la ruta y el nombre sean exactos
+import DetalleMesa from "./administracion/mesas/DetalleMesa";
+import Cocina from "./cocina/cocina";
+
+// MODIFICACIÓN TEMPORAL: Acepta cualquier cambio para asegurar que el canal dispare la alerta
+const esAlertaRoja = (p) => {
+  return true;
+};
 
 // Componente para el botón de volver (reutilizable en todas las rutas)
 const BotonVolver = () => {
@@ -56,18 +63,66 @@ function MenuPrincipal() {
         }}
       >
         <button onClick={() => navigate("/administracion")}>
-          Ser Administrador
+          Ser Administrator
         </button>
-        <button onClick={() => navigate("/clientes")}>Ser Cliente</button>
+        {/* Cambiado a /clientes/8 de forma temporal para desarrollo si entran desde el menú principal */}
+        <button onClick={() => navigate("/clientes/8")}>Ser Cliente</button>
+        <button onClick={() => navigate("/cocina")}>Ir a Cocina</button>
       </div>
     </div>
   );
 }
 
 function SeleccionePerfil() {
-  // Este estado es CRUCIAL: guardará el número de mesa (ej. 5)
-  // cuando hagas clic en Pedidos.jsx para pasárselo a DetalleMesa.jsx
   const [mesaSeleccionada, setMesaSeleccionada] = useState(null);
+
+  // Escucha global con diagnósticos reforzados
+  useEffect(() => {
+    if (Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+
+    const canal = supabase
+      .channel("alertas-visuales-globales")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "pedidos_clientes" },
+        (payload) => {
+          console.log(
+            "⚡ ¡Supabase envió datos en vivo! Payload completo:",
+            payload,
+          );
+
+          const nuevoMovimiento = payload.new;
+
+          if (nuevoMovimiento) {
+            if (Notification.permission === "granted") {
+              const titulo = `🚨 ¡Cambio en Mesa ${nuevoMovimiento.mesa || "?"}!`;
+              const opciones = {
+                body: `Pedido: ${nuevoMovimiento["nombre-pedido"] || "Actualización de estado"}`,
+                icon: "/favicon.svg",
+                tag: "pedido-alerta",
+                renotify: true,
+              };
+
+              new Notification(titulo, opciones);
+            } else {
+              console.log(
+                "⚠️ El permiso de notificación no está otorgado. Estado actual:",
+                Notification.permission,
+              );
+            }
+          }
+        },
+      )
+      .subscribe((status) => {
+        console.log("📡 Estado de la conexión Realtime:", status);
+      });
+
+    return () => {
+      supabase.removeChannel(canal);
+    };
+  }, []);
 
   return (
     <BrowserRouter>
@@ -75,9 +130,9 @@ function SeleccionePerfil() {
         {/* 1. Ruta Principal */}
         <Route path="/" element={<MenuPrincipal />} />
 
-        {/* 2. Ruta para el Cliente */}
+        {/* 2. Ruta para el Cliente CORREGIDA: Se añade /:idMesa */}
         <Route
-          path="/clientes"
+          path="/clientes/:idMesa"
           element={
             <>
               <BotonVolver />
@@ -86,7 +141,7 @@ function SeleccionePerfil() {
           }
         />
 
-        {/* 3. Ruta Panel de Administración (Donde ves todas las opciones) */}
+        {/* 3. Ruta Panel de Administración */}
         <Route
           path="/administracion"
           element={
@@ -97,7 +152,7 @@ function SeleccionePerfil() {
           }
         />
 
-        {/* 4. Ruta de Pedidos (Donde están los cuadraditos de las mesas) */}
+        {/* 4. Ruta de Pedidos */}
         <Route
           path="/pedidos"
           element={
@@ -108,7 +163,7 @@ function SeleccionePerfil() {
           }
         />
 
-        {/* 5. RUTA CLAVE: Detalle de la Mesa seleccionada */}
+        {/* 5. Detalle de la Mesa seleccionada */}
         <Route
           path="/DetalleMesas"
           element={
@@ -144,6 +199,16 @@ function SeleccionePerfil() {
             <>
               <BotonVolver />
               <ModificarOpciones />
+            </>
+          }
+        />
+        {/* Ruta Panel de Cocina */}
+        <Route
+          path="/cocina"
+          element={
+            <>
+              <BotonVolver />
+              <Cocina />
             </>
           }
         />
