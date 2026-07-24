@@ -1,14 +1,18 @@
 // src/administracion/Administracion.jsx
 import { useNavigate } from "react-router-dom";
 import { useState, useEffect, useRef } from "react";
-import { supabase } from "../lib/supabase";
+// Importamos la referencia de la base de datos de tu archivo de configuración de Firebase
+import { db } from "../lib/firebise"; 
+// Importamos los módulos en tiempo real de Firestore
+import { collection, getDocs, onSnapshot } from "firebase/firestore";
 
 // Ruta absoluta apuntando a tu archivo en la carpeta 'public'
 const archivoAudio = "/alerta.mp3";
 
 const esAlertaRoja = (p) => {
   if (!p) return false;
-  const nombrePedido = p["nombre-pedido"] || p["nombre_pedido"] || "";
+  // En Firebase es una buena práctica usar guiones bajos (nombre_pedido)
+  const nombrePedido = p["nombre_pedido"] || p["nombre-pedido"] || "";
   return (
     p.espacio === "pedido_nuevo" ||
     p.espacio === 2 ||
@@ -35,31 +39,7 @@ function Administracion() {
     }
   };
 
-  const cargarPedidosGlobal = async () => {
-    const { data, error } = await supabase
-      .from("pedidos_clientes")
-      .select("mesa, nombre-pedido, espacio");
-
-    if (!error && data) {
-      const mapeo = Object.fromEntries(mesas.map((num) => [num, "libre"]));
-      data.forEach((p) => {
-        if (!p || p.mesa === undefined || p.mesa === null) return;
-        if (esAlertaRoja(p)) {
-          mapeo[p.mesa] = "pedido_nuevo";
-        } else if (p.espacio === "ocupada" || p.espacio === 1) {
-          if (mapeo[p.mesa] !== "pedido_nuevo") {
-            mapeo[p.mesa] = "ocupada";
-          }
-        }
-      });
-      setEstadoMesas(mapeo);
-    }
-  };
-
   useEffect(() => {
-    // Inicializar datos
-    cargarPedidosGlobal();
-
     if (Notification.permission === "default") {
       Notification.requestPermission();
     }
@@ -85,64 +65,60 @@ function Administracion() {
     document.addEventListener("click", desbloquearAudioEnMovil);
     document.addEventListener("touchstart", desbloquearAudioEnMovil);
 
-    // ESCUCHA PERSISTENTE: Se ejecuta siempre en segundo plano en esta sección
-    const canal = supabase
-      .channel("alertas-globales-administracion")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "pedidos_clientes" },
-        (payload) => {
-          if (
-            payload.eventType === "INSERT" ||
-            payload.eventType === "UPDATE"
-          ) {
-            const nuevoPedido = payload.new;
-            if (nuevoPedido && "mesa" in nuevoPedido) {
-              // SIEMPRE SONARÁ, no importa si estás viendo el menú principal o subventanas
-              if (esAlertaRoja(nuevoPedido)) {
-                reproducirAlerta();
+    // ESCUCHA PERSISTENTE EN TIEMPO REAL CON FIRESTORE (onSnapshot)
+    // Trae la carga inicial y se queda escuchando de forma eficiente cualquier cambio futuro.
+    const coleccionRef = collection(db, "pedidos_clientes");
+    
+    const desuscribir = onSnapshot(coleccionRef, (snapshot) => {
+      // Creamos un mapa inicializador con todas las mesas libres
+      const mapeo = Object.fromEntries(mesas.map((num) => [num, "libre"]));
+      
+      // Evaluamos el estado completo de la colección de Firestore
+      snapshot.docs.forEach((doc) => {
+        const p = doc.data();
+        if (!p || p.mesa === undefined || p.mesa === null) return;
+        
+        if (esAlertaRoja(p)) {
+          mapeo[p.mesa] = "pedido_nuevo";
+        } else if (p.espacio === "ocupada" || p.espacio === 1) {
+          if (mapeo[p.mesa] !== "pedido_nuevo") {
+            mapeo[p.mesa] = "ocupada";
+          }
+        }
+      });
 
-                // Notificación nativa por si minimizaste el navegador
-                if (document.hidden && Notification.permission === "granted") {
-                  const nombrePedido =
-                    nuevoPedido["nombre-pedido"] ||
-                    nuevoPedido["nombre_pedido"] ||
-                    "";
-                  new Notification(`🚨 ¡Alerta Mesa ${nuevoPedido.mesa}!`, {
-                    body:
-                      nombrePedido === "SOLICITUD DE CUENTA"
-                        ? "¡Piden la cuenta!"
-                        : `Pedido: ${nombrePedido}`,
-                    icon: "/favicono.svg",
-                  });
-                }
-              }
+      // Verificamos si en los cambios (cambios incrementales) hubo una inserción o modificación de alerta roja
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === "added" || change.type === "modified") {
+          const nuevoPedido = change.doc.data();
+          
+          if (esAlertaRoja(nuevoPedido)) {
+            reproducirAlerta();
 
-              // Actualizamos el estado compartido de las mesas
-              setEstadoMesas((prevEstado) => {
-                const nuevoEstado = { ...prevEstado };
-                if (esAlertaRoja(nuevoPedido)) {
-                  nuevoEstado[nuevoPedido.mesa] = "pedido_nuevo";
-                } else if (
-                  nuevoPedido.espacio === "ocupada" ||
-                  nuevoPedido.espacio === 1
-                ) {
-                  nuevoEstado[nuevoPedido.mesa] = "ocupada";
-                } else if (nuevoPedido.espacio === "libre") {
-                  nuevoEstado[nuevoPedido.mesa] = "libre";
-                }
-                return nuevoEstado;
+            // Notificación nativa por si minimizaste el navegador
+            if (document.hidden && Notification.permission === "granted") {
+              const nombrePedido = nuevoPedido["nombre_pedido"] || nuevoPedido["nombre-pedido"] || "";
+              new Notification(`🚨 ¡Alerta Mesa ${nuevoPedido.mesa}!`, {
+                body:
+                  nombrePedido === "SOLICITUD DE CUENTA"
+                    ? "¡Piden la cuenta!"
+                    : `Pedido: ${nombrePedido}`,
+                icon: "/favicono.svg",
               });
             }
-          } else {
-            cargarPedidosGlobal();
           }
-        },
-      )
-      .subscribe();
+        }
+      });
 
+      // Actualizamos el estado con el nuevo mapeo procesado
+      setEstadoMesas(mapeo);
+    }, (error) => {
+      console.error("Error en la escucha en tiempo real de Firestore:", error);
+    });
+
+    // LIMPIEZA DEL EFECTO
     return () => {
-      supabase.removeChannel(canal);
+      desuscribir(); // Apaga el listener en tiempo real de Firestore al desmontar
       limpiarEventosDesbloqueo();
     };
   }, []);
@@ -160,7 +136,7 @@ function Administracion() {
           modificar precios
         </button>
 
-        {/* CORRECCIÓN: Al navegar a pedidos, le enviamos los datos actuales de las mesas por 'state' */}
+        {/* Enviamos los datos actuales de las mesas por 'state' al modulo de pedidos */}
         <button
           className="boton"
           onClick={() => navigate("/pedidos", { state: { estadoMesas } })}

@@ -1,23 +1,38 @@
 import { useState, useEffect } from "react";
-import { supabase } from "../../lib/supabase"; // Asegurate de que la ruta a tu archivo supabase sea la correcta
+import { db } from "../../lib/firebise"; // Mantenemos tu ruta al archivo de configuración
+import { 
+  collection, 
+  getDocs, 
+  doc, 
+  deleteDoc, 
+  writeBatch 
+} from "firebase/firestore";
 
 function Administracion() {
   const [ventas, setVentas] = useState([]);
   const [cargando, setCargando] = useState(true);
 
-  // Función para traer el historial de cobros desde Supabase
+  // Función para traer el historial de cobros desde Firebase
   const cargarVentas = async () => {
     try {
       setCargando(true);
-      const { data, error } = await supabase.from("caja").select("*");
+      
+      // 1. Obtenemos la referencia directa a la colección "caja"
+      const querySnapshot = await getDocs(collection(db, "caja"));
 
-      if (error) throw error;
+      // 2. Mapeamos los documentos para construir el array de objetos
+      const listaVentas = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
 
-      if (data) setVentas(data);
+      // 3. Guardamos las ventas en el estado
+      setVentas(listaVentas);
+
     } catch (error) {
       console.error("Error al cargar los datos de caja:", error);
       alert(
-        "No se pudieron cargar las ventas. Revisá las políticas RLS de la tabla 'caja'.",
+        "No se pudieron cargar las ventas. Revisá las Reglas de Seguridad (Rules) de la colección 'caja' en Firebase."
       );
     } finally {
       setCargando(false);
@@ -30,7 +45,8 @@ function Administracion() {
 
   // LÓGICA: Sumamos los totales acumulados agrupándolos por número de mesa
   const totalesPorMesa = ventas.reduce((acc, curr) => {
-    const numeroMesa = curr.mesa; // Es un número (ej: 5)
+    const numeroMesa = curr.mesa; 
+    // Ojo acá: si en Firebase migraste los campos con guiones modificá estos strings por "cantidad-pedido", etc.
     const cantidad = Number(curr.cantidad_pedido) || 0;
     const precio = Number(curr.precio_pedido) || 0;
     const subtotalRegistro = cantidad * precio;
@@ -42,7 +58,7 @@ function Administracion() {
   // Suma total histórica de todas las mesas juntas
   const totalFinal = Object.values(totalesPorMesa).reduce((a, b) => a + b, 0);
 
-  // Función para vaciar por completo el historial de caja
+  // Función para vaciar por completo el historial de caja en Firebase
   const eliminarHistorialCaja = async () => {
     const confirmar = window.confirm(
       "¿ESTÁS SEGURO? Esta acción borrará TODO el historial de recaudación de la caja definitivamente.",
@@ -50,19 +66,36 @@ function Administracion() {
     if (!confirmar) return;
 
     try {
-      // Al hacer un delete sin .eq(), PostgreSQL podría bloquearlo por seguridad,
-      // así que usamos un filtro que abarque a todos (id mayor a 0)
-      const { error } = await supabase.from("caja").delete().gt("id", 0);
+      setCargando(true);
 
-      if (error) throw error;
+      // 1. Traemos todos los documentos actuales de la colección "caja"
+      const querySnapshot = await getDocs(collection(db, "caja"));
+      
+      if (querySnapshot.empty) {
+        alert("La caja ya está vacía.");
+        return;
+      }
 
-      alert("Historial de caja eliminado.");
+      // 2. Usamos un Batch (lote) para borrar todos los documentos de forma eficiente y en una sola operación
+      const batch = writeBatch(db);
+      
+      querySnapshot.docs.forEach((documento) => {
+        const docRef = doc(db, "caja", documento.id);
+        batch.delete(docRef);
+      });
+
+      // 3. Impactamos los borrados en Firebase
+      await batch.commit();
+
+      alert("Historial de caja eliminado de Firebase exitosamente.");
       setVentas([]); // Vaciamos el estado local de la app
     } catch (error) {
       console.error("Error al eliminar la caja:", error);
       alert(
-        "No se pudo eliminar el historial. Comprobá los permisos de DELETE en la tabla 'caja'.",
+        "No se pudo eliminar el historial. Comprobá las Reglas de Seguridad (Rules) para permisos de DELETE en Firebase.",
       );
+    } finally {
+      setCargando(false);
     }
   };
 
@@ -76,7 +109,7 @@ function Administracion() {
   if (cargando)
     return (
       <p style={{ textAlign: "center", marginTop: "5px" }}>
-        Cargando datos de caja...
+        Procesando datos de caja...
       </p>
     );
 
@@ -87,9 +120,8 @@ function Administracion() {
       </header>
 
       <div className="contenedor-mesas">
-        {/* Generamos las 13 mesas usando el índice numérico puro */}
         {Array.from({ length: 13 }, (_, i) => {
-          const numeroMesa = i + 1; // 1, 2, 3... hasta 13
+          const numeroMesa = i + 1; 
           const total = totalesPorMesa[numeroMesa] || 0;
 
           return (

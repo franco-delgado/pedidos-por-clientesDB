@@ -1,61 +1,54 @@
 import React, { useState, useEffect } from "react";
-import { supabase } from "../lib/supabase";
-import { useNavigate } from "react-router-dom";
+// Importamos la instancia de la base de datos de tu archivo de configuración central
+import { db } from "../lib/firebise";
+// Importamos los métodos en tiempo real de Firestore
+import { collection, onSnapshot } from "firebase/firestore";
 import "./cocina.css";
 
 function Cocina() {
   const mesas = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
-  //Estado para guardar los datos de completos de los pedidos
+  
+  // Estado para guardar los datos completos de los pedidos
   const [pedidos, setPedidos] = useState([]);
+  // Añadimos el estado que faltaba definir en tu componente original para evitar errores
+  const [estadoMesas, setEstadoMesas] = useState({});
 
-  //Procesa los estados visuales de las mesas
-  const procesarPedidos = (pedidos) => {
-    const mapeo = object.forEntries(mesas.map((num) => [num, "libre"]));
+  // Lógica para procesar los estados visuales de las mesas (si la usás en los estilos)
+  const procesarEstados = (listaPedidos) => {
+    const mapeo = Object.fromEntries(mesas.map((num) => [num, "libre"]));
 
-    forEach((p) => {
-      if (p.espacio === "pedidoNuevo" || p.espacio === "ocupada") {
-        mapeo[p.mesa] = p.espacio;
+    listaPedidos.forEach((p) => {
+      // Validamos tanto el formato viejo como el nuevo estandarizado
+      const estado = p.espacio;
+      if (estado === "pedido_nuevo" || estado === "pedidoNuevo" || estado === "ocupada") {
+        mapeo[p.mesa] = estado;
       }
     });
     setEstadoMesas(mapeo);
   };
 
-  const cargarPedidos = async () => {
-    // Agregamos "cantidad-pedida" a la consulta
-    const { data, error } = await supabase
-      .from("pedidos_clientes")
-      .select('mesa, "nombre-pedido", "cantidad-pedida", espacio'); // Usamos comillas si da error por los guiones
-
-    if (error) {
-      console.error("Error al cargar pedidos:", error);
-      return;
-    }
-
-    if (data) {
-      // 1. Guardamos la lista completa para renderizarla en la cocina
-      setPedidos(data);
-      // 2. Ejecutamos tu lógica mágica para el mapa de mesas
-      procesarEstados(data);
-    }
-  };
-
+  // --- ESCUCHA EN TIEMPO REAL CON FIRESTORE ---
   useEffect(() => {
-    cargarPedidos();
+    const coleccionRef = collection(db, "pedidos_clientes");
 
-    const canal = supabase
-      .channel("room-pedidos")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "pedidos_clientes" },
-        async () => {
-          await cargarPedidos();
-        },
-      )
-      .subscribe();
+    // onSnapshot se ejecuta inmediatamente y cada vez que cambia la colección
+    const desuscribir = onSnapshot(coleccionRef, (snapshot) => {
+      const listaPedidos = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
 
-    return () => {
-      supabase.removeChannel(canal);
-    };
+      // 1. Guardamos la lista en tiempo real para renderizarla en la cocina
+      setPedidos(listaPedidos);
+      
+      // 2. Ejecutamos tu lógica para el mapa de mesas
+      procesarEstados(listaPedidos);
+    }, (error) => {
+      console.error("Error escuchando cambios en pedidos de cocina:", error);
+    });
+
+    // Limpieza del listener al desmontar el componente
+    return () => desuscribir();
   }, []);
 
   return (
@@ -70,14 +63,16 @@ function Cocina() {
         <p>No hay pedidos pendientes en este momento.</p>
       ) : (
         <div className="pedidos-container">
-          {pedidos.map((pedido, index) => (
-            <div className="pedidos" key={index}>
+          {pedidos.map((pedido) => (
+            <div className="pedidos" key={pedido.id}>
               <h3 className="h3-cocina">Mesa {pedido.mesa}</h3>
               <p className="nombre-pedido">
-                <strong>Plato:</strong> {pedido["nombre-pedido"]}
+                {/* Soportamos el campo estandarizado y el anterior por compatibilidad */}
+                <strong>Plato:</strong> {pedido.nombre_pedido || pedido["nombre-pedido"]}
               </p>
               <p className="cantidad-pedido">
-                <strong>Cantidad:</strong> {pedido["cantidad-pedida"]}
+                {/* Soportamos el campo estandarizado y el anterior por compatibilidad */}
+                <strong>Cantidad:</strong> {pedido.cantidad_pedida || pedido["cantidad-pedida"]}
               </p>
             </div>
           ))}

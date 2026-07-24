@@ -1,21 +1,59 @@
 import React, { useEffect, useState } from "react";
-import { supabase } from "../../lib/supabase";
-import { emitirImpresionMesa } from "../../impresora/ticketService"; // <- IMPORTANTE: Importamos el nuevo servicio
+import { db } from "../../lib/firebise"; // Tu configuración habitual
+import { useNavigate } from "react-router-dom";
+import { 
+  collection, 
+  query, 
+  where, 
+  getDocs, 
+  addDoc, 
+  deleteDoc, 
+  doc 
+} from "firebase/firestore";
+import { emitirImpresionMesa } from "../../impresora/ticketService";
 import "./DetallesMesa.css";
 
 function DetalleMesa({ idMesa }) {
   const [datosPedido, setDatosPedido] = useState([]);
   const [cargando, setCargando] = useState(false);
+  const navigate = useNavigate();
 
+  // Carga el detalle de la mesa desde Firestore
   const cargarDetalle = async () => {
     if (!idMesa) return;
 
-    const { data, error } = await supabase
-      .from("pedidos_clientes")
-      .select("*")
-      .eq("mesa", idMesa);
+    try {
+      const q = query(
+        collection(db, "pedidos_clientes"), 
+        where("mesa", "==", Number(idMesa)) // Garantiza la comparación numérica o texto según cómo guardes el id
+      );
 
-    if (data) setDatosPedido(data);
+      const querySnapshot = await getDocs(q);
+      
+      const listaPedidos = querySnapshot.docs.map(docSnap => ({
+        id: docSnap.id,
+        ...docSnap.data()
+      }));
+
+      // Si no devolvió resultados intentando como número, intenta la búsqueda con string por seguridad
+      if (listaPedidos.length === 0) {
+        const qString = query(
+          collection(db, "pedidos_clientes"),
+          where("mesa", "==", String(idMesa))
+        );
+        const querySnapshotString = await getDocs(qString);
+        const listaPedidosString = querySnapshotString.docs.map(docSnap => ({
+          id: docSnap.id,
+          ...docSnap.data()
+        }));
+        setDatosPedido(listaPedidosString);
+      } else {
+        setDatosPedido(listaPedidos);
+      }
+
+    } catch (error) {
+      console.error("Error al cargar el detalle de la mesa desde Firestore:", error);
+    }
   };
 
   useEffect(() => {
@@ -24,7 +62,7 @@ function DetalleMesa({ idMesa }) {
 
   const calcularTotalMesa = () => {
     return datosPedido.reduce((acumulador, item) => {
-      const cantidad = Number(item["cantidad-pedida"]) || 0;
+      const cantidad = Number(item["cantidad_pedida"]) || 0;
       const precio = Number(item["precio_unitario"]) || 0;
       return acumulador + precio * cantidad;
     }, 0);
@@ -35,9 +73,8 @@ function DetalleMesa({ idMesa }) {
 
     const totalMesa = calcularTotalMesa();
 
-    // 1. Preguntamos primero si desea emitir el ticket
     const quiereImprimir = window.confirm(
-      "¿Deseas imprimir el ticket de consumo para esta mesa?",
+      "¿Deseas imprimir el ticket de consumo para esta mesa?"
     );
 
     if (quiereImprimir) {
@@ -46,51 +83,49 @@ function DetalleMesa({ idMesa }) {
       } catch (err) {
         console.error("Error al generar la impresión del ticket:", err);
         const procederSinTicket = window.confirm(
-          "Ocurrió un problema con la impresora. ¿Deseas proceder con el cobro en caja igualmente?",
+          "Ocurrió un problema con la impresora. ¿Deseas proceder con el cobro en caja igualmente?"
         );
-        // Si hay error en la impresora y el usuario cancela, frenamos todo
         if (!procederSinTicket) return;
       }
     }
 
-    // 2. Ahora sí, confirmamos el cobro definitivo y vaciado de mesa
     const confirmar = window.confirm(
-      `¿Estás seguro de cobrar el total de $${totalMesa} y vaciar la mesa ${idMesa}?`,
+      `¿Estás seguro de cobrar el total de $${totalMesa} y vaciar la mesa ${idMesa}?`
     );
     if (!confirmar) return;
 
     setCargando(true);
 
     try {
-      const filasCaja = datosPedido.map((item) => {
-        const cantidad = Number(item["cantidad-pedida"]) || 0;
+      // 1. Registrar las ventas en la colección 'caja'
+      const promesasInsertar = datosPedido.map((item) => {
+        const cantidad = Number(item["cantidad_pedida"]) || 0;
         const precioUnitario = Number(item["precio_unitario"]) || 0;
 
-        return {
-          nombre_pedido: item["nombre-pedido"],
+        return addDoc(collection(db, "caja"), {
+          nombre_pedido: item["nombre-pedido"] || item["nombre_pedido"],
           precio_pedido: precioUnitario * cantidad,
           cantidad_pedido: cantidad,
           mesa: Number(idMesa),
-        };
+          fecha: new Date()
+        });
       });
 
-      // Insertar en la tabla caja
-      const { error: errorInsert } = await supabase
-        .from("caja")
-        .insert(filasCaja);
+      await Promise.all(promesasInsertar);
 
-      if (errorInsert) throw errorInsert;
+      // 2. VACIAR LA MESA: Borra cada documento de pedido de la colección 'pedidos_clientes'
+      const promesasEliminar = datosPedido.map((item) => {
+        return deleteDoc(doc(db, "pedidos_clientes", item.id));
+      });
 
-      // Borrar pedidos de la mesa
-      const { error: errorDelete } = await supabase
-        .from("pedidos_clientes")
-        .delete()
-        .eq("mesa", idMesa);
+      await Promise.all(promesasEliminar);
 
-      if (errorDelete) throw errorDelete;
-
-      alert("¡Cuenta cobrada con éxito y registrada en caja!");
+      alert("¡Cuenta cobrada con éxito y mesa vaciada!");
       setDatosPedido([]);
+      
+      // 3. Redirigir al panel de pedidos para ver la mesa libre
+      navigate("/Pedidos");
+
     } catch (error) {
       console.error("Error en el proceso de cobro:", error);
       alert("Hubo un error al procesar el pago. Por favor revisá la consola.");
@@ -100,20 +135,18 @@ function DetalleMesa({ idMesa }) {
   };
 
   return (
-    <div
-      style={{ padding: "15px", border: "1px solid #ddd", borderRadius: "8px" }}
-    >
+    <div style={{ padding: "15px", border: "1px solid #ddd", borderRadius: "8px" }}>
       <h2>Detalle de Mesa {idMesa}</h2>
 
       {datosPedido.length > 0 ? (
         <div>
           {datosPedido.map((item, i) => {
-            const cantidad = Number(item["cantidad-pedida"]) || 0;
+            const cantidad = Number(item["cantidad_pedida"]) || 0;
             const precio = Number(item["precio_unitario"]) || 0;
             return (
               <div key={i}>
                 <p>
-                  {cantidad}x {item["nombre-pedido"]} ${precio}
+                  {cantidad}x {item["nombre-pedido"] || item["nombre_pedido"]} ${precio}
                   <span style={{ color: "gray" }}>
                     {" "}
                     (Subtotal: ${cantidad * precio})

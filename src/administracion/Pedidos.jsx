@@ -1,6 +1,15 @@
 // src/administracion/Pedidos.jsx
 import React, { useState, useEffect } from "react";
-import { supabase } from "../lib/supabase";
+import { db } from "../lib/firebise"; 
+import { 
+  collection, 
+  onSnapshot, 
+  doc, 
+  query, 
+  where, 
+  getDocs,
+  writeBatch 
+} from "firebase/firestore";
 import { useNavigate, useLocation } from "react-router-dom";
 import "./administracion.css";
 
@@ -14,41 +23,47 @@ function Pedidos({ setMesaSeleccionada }) {
     location.state?.estadoMesas || {},
   );
 
-  // Opcional: Mantenemos una escucha simple en tiempo real SOLO para pintar los colores si cambia algo mientras estamos viendo esta pantalla.
+  // Escucha activa en TIEMPO REAL con onSnapshot de Firebase
   useEffect(() => {
-    const canalPedidos = supabase
-      .channel("vista-pedidos")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "pedidos_clientes" },
-        (payload) => {
-          if (
-            payload.eventType === "INSERT" ||
-            payload.eventType === "UPDATE"
-          ) {
-            const p = payload.new;
+    const q = collection(db, "pedidos_clientes");
+
+    const desuscribir = onSnapshot(q, (snapshot) => {
+      setEstadoMesas((prev) => {
+        const copia = { ...prev };
+
+        snapshot.docChanges().forEach((change) => {
+          const p = change.doc.data();
+
+          if (change.type === "added" || change.type === "modified") {
             const nombrePedido = p["nombre-pedido"] || p["nombre_pedido"] || "";
+            
             const esRoja =
               p.espacio === "pedido_nuevo" ||
               p.espacio === 2 ||
               nombrePedido === "SOLICITUD DE CUENTA";
 
-            setEstadoMesas((prev) => {
-              const copia = { ...prev };
-              if (esRoja) copia[p.mesa] = "pedido_nuevo";
-              else if (p.espacio === "ocupada" || p.espacio === 1)
-                copia[p.mesa] = "ocupada";
-              else if (p.espacio === "libre") copia[p.mesa] = "libre";
-              return copia;
-            });
-          }
-        },
-      )
-      .subscribe();
+            if (esRoja) {
+              copia[p.mesa] = "pedido_nuevo";
+            } else if (p.espacio === "ocupada" || p.espacio === 1) {
+              copia[p.mesa] = "ocupada";
+            } else if (p.espacio === "libre") {
+              copia[p.mesa] = "libre";
+            }
+          } 
 
-    return () => {
-      supabase.removeChannel(canalPedidos);
-    };
+          // MANEJAR DOCUMENTOS ELIMINADOS
+          // Al vaciar los pedidos de la mesa desde DetalleMesa, la devolvemos a 'libre'
+          if (change.type === "removed") {
+            copia[p.mesa] = "libre";
+          }
+        });
+
+        return copia;
+      });
+    });
+
+    // Desuscribimos la escucha en tiempo real al desmontar para proteger los recursos
+    return () => desuscribir();
   }, []);
 
   const irAMesa = async (num) => {
@@ -57,11 +72,41 @@ function Pedidos({ setMesaSeleccionada }) {
     }
     setEstadoMesas((prev) => ({ ...prev, [num]: "ocupada" }));
 
-    await supabase
-      .from("pedidos_clientes")
-      .update({ espacio: "ocupada" })
-      .eq("mesa", num)
-      .neq("nombre-pedido", "SOLICITUD DE CUENTA");
+    try {
+      // Buscamos los documentos activos que pertenecen a la mesa seleccionada
+      const q = query(
+        collection(db, "pedidos_clientes"),
+        where("mesa", "==", num)
+      );
+      
+      const querySnapshot = await getDocs(q);
+
+      if (!querySnapshot.empty) {
+        // Inicializamos un lote (Batch) para procesar todas las actualizaciones juntas
+        const batch = writeBatch(db);
+        let hayCambios = false;
+
+        querySnapshot.docs.forEach((documento) => {
+          const datosDoc = documento.data();
+          const nombrePedido = datosDoc["nombre-pedido"] || datosDoc["nombre_pedido"] || "";
+
+          // Excluimos las solicitudes de cuenta del cambio automático según las reglas de tu app
+          if (nombrePedido !== "SOLICITUD DE CUENTA") {
+            const docRef = doc(db, "pedidos_clientes", documento.id);
+            batch.update(docRef, { espacio: "ocupada" });
+            hayCambios = true;
+          }
+        });
+
+        // Solo impactamos la base de datos si encontramos registros válidos para actualizar
+        if (hayCambios) {
+          await batch.commit();
+        }
+      }
+
+    } catch (error) {
+      console.error("Error al actualizar el estado de la mesa mediante lote en Firebase:", error);
+    }
 
     navigate("/DetalleMesas");
   };

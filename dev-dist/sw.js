@@ -81,7 +81,7 @@ define(['./workbox-caf3a6a6'], (function (workbox) { 'use strict';
     "revision": "3ca0b8505b4bec776b69afdba2768812"
   }, {
     "url": "index.html",
-    "revision": "0.mf7e3i1oveo"
+    "revision": "0.ipr4afidols"
   }], {});
   workbox.cleanupOutdatedCaches();
   workbox.registerRoute(new workbox.NavigationRoute(workbox.createHandlerBoundToURL("index.html"), {
@@ -98,7 +98,7 @@ define(['./workbox-caf3a6a6'], (function (workbox) { 'use strict';
   }), 'GET');
   workbox.registerRoute(({
     url
-  }) => url.href.includes("supabase.co") || url.pathname.startsWith("/api/"), new workbox.NetworkFirst({
+  }) => url.href.includes("firebaseio.com") || url.href.includes("googleapis.com") || url.pathname.startsWith("/api/"), new workbox.NetworkFirst({
     "cacheName": "api-cache",
     "networkTimeoutSeconds": 5,
     plugins: [new workbox.ExpirationPlugin({

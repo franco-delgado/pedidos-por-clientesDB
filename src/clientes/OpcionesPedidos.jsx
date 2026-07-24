@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { supabase } from "../lib/supabase";
+// Importamos la instancia de la base de datos de tu configuración de Firebase
+import { db } from "../lib/firebise"; 
+// Importamos los métodos requeridos de Firestore
+import { collection, query, where, getDocs, doc, addDoc, updateDoc } from "firebase/firestore";
 import FooterComponent from "../FooterComponent";
 import "./Clientes.css";
 
@@ -22,21 +25,29 @@ function OpcionesPedidos({ categoria, alVolver }) {
     localStorage.setItem("carrito_mesa", JSON.stringify(pedidos));
   }, [pedidos]);
 
-  // Cargar Productos de la Categoría
+  // Cargar Productos de la Categoría desde Firestore
   useEffect(() => {
     async function obtenerProductos() {
-      setCargando(true);
-      const { data, error } = await supabase
-        .from("datos")
-        .select("*")
-        .eq("categoria", categoria.nombre.toUpperCase());
+      try {
+        setCargando(true);
+        const coleccionRef = collection(db, "datos");
+        const consulta = query(
+          coleccionRef, 
+          where("categoria", "==", categoria.nombre.toUpperCase())
+        );
+        const snapshot = await getDocs(consulta);
+        
+        const data = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data()
+        }));
 
-      if (error) {
-        console.error("Error al cargar productos:", error);
-      } else {
-        setProductos(data || []);
+        setProductos(data);
+      } catch (error) {
+        console.error("Error al cargar productos de Firestore:", error);
+      } finally {
+        setCargando(false);
       }
-      setCargando(false);
     }
     obtenerProductos();
   }, [categoria.nombre]);
@@ -115,6 +126,7 @@ function OpcionesPedidos({ categoria, alVolver }) {
           }
           return {
             ...item,
+            text: item.nombre,
             cantidad: nuevaCantidad,
             subtotal: nuevaCantidad * item.precio_unitario,
           };
@@ -131,52 +143,45 @@ function OpcionesPedidos({ categoria, alVolver }) {
     if (nuevosPedidos.length === 0) setMostrarCarrito(false);
   };
 
-  // --- FINALIZAR PEDIDO (CARGA A BASE DE DATOS) ---
+  // --- FINALIZAR PEDIDO (CARGA A BASE DE DATOS FIRESTORE) ---
   const finalizarPedidoCompleto = async () => {
     if (pedidos.length === 0) return;
 
     try {
-      // 1. Preparamos los datos para enviar
-      // Como tu tabla tiene columnas individuales, enviamos un array de filas
-      const filasParaInsertar = pedidos.map((item) => ({
-        mesa: 8, // Tu columna 1 (number)
-        "nombre-pedido": item.nombre, // Tu columna 2 (text)
-        "cantidad-pedida": item.cantidad, // Tu columna 3 (number)
-        precio_unitario: item.precio_unitario, // Tu columna 4 (number)
-        espacio: "pedido_nuevo", // <--- ESTA ES LA CLAVE PARA EL COLOR ROJO
-      }));
+      const coleccionPedidosRef = collection(db, "pedidos_clientes");
 
-      // 2. Insertar en la base de datos
-      // Supabase permite enviar un array de objetos para insertar varias filas a la vez
-      const { error: errorPedido } = await supabase
-        .from("pedidos_clientes")
-        .insert(filasParaInsertar);
+      // 1. Guardar cada ítem del carrito en Firestore de forma paralela y eficiente
+      const promesasPedidos = pedidos.map((item) => {
+        return addDoc(coleccionPedidosRef, {
+          mesa: 8, // ID estático temporal según requerimiento de tu código original
+          nombre_pedido: item.nombre, 
+          cantidad_pedida: item.cantidad, 
+          precio_unitario: item.precio_unitario, 
+          espacio: "pedido_nuevo" 
+        });
+      });
 
-      if (errorPedido) {
-        console.error("Error de Supabase:", errorPedido.message);
-        alert("Error al guardar: " + errorPedido.message);
-        return;
-      }
+      await Promise.all(promesasPedidos);
 
-      // 3. Actualizar el stock de los productos en la tabla 'datos'
+      // 2. Actualizar el stock remanente en la colección 'datos'
       const promesasStock = pedidos.map((item) => {
-        return supabase
-          .from("datos")
-          .update({ stock: item.stock_original - item.cantidad })
-          .eq("id", item.id_producto);
+        const documentoProductoRef = doc(db, "datos", item.id_producto);
+        return updateDoc(documentoProductoRef, {
+          stock: item.stock_original - item.cantidad
+        });
       });
 
       await Promise.all(promesasStock);
 
-      // 4. Limpieza y éxito
+      // 3. Limpieza de interfaz y éxito
       alert("¡Pedido enviado correctamente!");
       setPedidos([]);
       localStorage.removeItem("carrito_mesa");
       setMostrarCarrito(false);
       alVolver();
     } catch (err) {
-      console.error("Error inesperado:", err);
-      alert("Ocurrió un error inesperado.");
+      console.error("Error inesperado en el guardado de Firestore:", err);
+      alert("Ocurrió un error inesperado al enviar el pedido.");
     }
   };
 
@@ -189,8 +194,7 @@ function OpcionesPedidos({ categoria, alVolver }) {
     <div className="editor-container">
       <header className="superior">
         <button onClick={alVolver} className="btn-atras">
-          {" "}
-          ← Atrás{" "}
+          ← Atrás
         </button>
         <h2>{categoria?.nombre?.toUpperCase()}</h2>
       </header>
@@ -201,7 +205,6 @@ function OpcionesPedidos({ categoria, alVolver }) {
             key={prod.id}
             className={`item-editar ${prod.stock <= 0 ? "sin-stock" : ""}`}
           >
-            {/* 1. LA FOTO VA PRIMERO (A la izquierda) */}
             <div className="foto-producto-contenedor">
               {prod.imagen_url ? (
                 <img

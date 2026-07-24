@@ -8,8 +8,8 @@ export default defineConfig({
     VitePWA({
       registerType: "autoUpdate",
       injectRegister: "auto",
-      includeAssets: ["favicon.svg", "icon.png", "robots.txt"], 
-      
+      includeAssets: ["favicon.svg", "icon.png", "robots.txt"],
+
       // CONFIGURACIÓN DEL SERVICE WORKER (WORKBOX)
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
@@ -26,7 +26,11 @@ export default defineConfig({
             },
           },
           {
-            urlPattern: ({ url }) => url.href.includes("supabase.co") || url.pathname.startsWith("/api/"),
+            // Actualizado para escuchar peticiones de Firebase en lugar de Supabase
+            urlPattern: ({ url }) => 
+              url.href.includes("firebaseio.com") || 
+              url.href.includes("googleapis.com") || 
+              url.pathname.startsWith("/api/"),
             handler: "NetworkFirst",
             options: {
               cacheName: "api-cache",
@@ -71,4 +75,14 @@ export default defineConfig({
     }),
   ],
   base: "./",
+  // SOLUCIÓN AL ERROR DE WEBSOCKET / HMR EN VITE
+  server: {
+    host: "localhost",
+    port: 5173,
+    hmr: {
+      protocol: "ws",
+      host: "localhost",
+      port: 5173,
+    },
+  },
 });

@@ -1,28 +1,58 @@
 import React, { useState, useEffect } from "react";
-import { supabase } from "../lib/supabase";
+// Importamos la instancia de la base de datos de tu archivo de configuración
+import { db } from "../lib/firebise"; 
+// Importamos los métodos nativos de Firestore
+import { 
+  collection, 
+  query, 
+  where, 
+  getDocs, 
+  doc, 
+  addDoc, 
+  setDoc, 
+  deleteDoc, 
+  writeBatch 
+} from "firebase/firestore";
+// Importamos las herramientas para manejar las imágenes en Firebase Storage
+import { 
+  getStorage, 
+  ref, 
+  uploadBytes, 
+  getDownloadURL 
+} from "firebase/storage";
 import "./administracion.css";
 
 function ModificarOpciones({ categoria, alVolver }) {
   const [productos, setProductos] = useState([]);
   const [cargando, setCargando] = useState(true);
-  // Guardamos temporalmente los archivos seleccionados usando el id temporal/real como clave
+  // Guardamos los archivos seleccionados usando el id (temporal o real) como clave
   const [archivosFotos, setArchivosFotos] = useState({});
 
-  // 1. CARGAR DATOS EXISTENTES
+  // Inicializamos Firebase Storage pasándole la configuración de la app
+  const storage = getStorage();
+
+  // 1. CARGAR DATOS EXISTENTES DESDE FIRESTORE
   useEffect(() => {
     async function obtenerProductos() {
-      setCargando(true);
-      const { data, error } = await supabase
-        .from("datos")
-        .select("*")
-        .eq("categoria", categoria.nombre.toUpperCase());
-
-      if (error) {
-        console.error("Error al cargar productos:", error);
-      } else {
-        setProductos(data || []);
+      try {
+        setCargando(true);
+        const q = query(
+          collection(db, "datos"),
+          where("categoria", "==", categoria.nombre.toUpperCase())
+        );
+        
+        const querySnapshot = await getDocs(q);
+        const listaProductos = querySnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        
+        setProductos(listaProductos);
+      } catch (error) {
+        console.error("Error al cargar productos desde Firestore:", error);
+      } finally {
+        setCargando(false);
       }
-      setCargando(false);
     }
     obtenerProductos();
   }, [categoria.nombre]);
@@ -40,7 +70,7 @@ function ModificarOpciones({ categoria, alVolver }) {
     setProductos([...productos, nuevo]);
   };
 
-  // 3. ELIMINAR
+  // 3. ELIMINAR UN DOCUMENTO
   const eliminarProducto = async (id) => {
     if (typeof id === "string" && id.startsWith("temp-")) {
       setProductos(productos.filter((prod) => prod.id !== id));
@@ -50,13 +80,13 @@ function ModificarOpciones({ categoria, alVolver }) {
       return;
     }
 
-    const { error } = await supabase.from("datos").delete().eq("id", id);
-
-    if (error) {
-      console.error("Error al eliminar:", error);
-      alert("No se pudo eliminar de la base de datos");
-    } else {
+    try {
+      // En Firestore eliminamos directamente apuntando a la referencia del ID del doc
+      await deleteDoc(doc(db, "datos", id));
       setProductos(productos.filter((prod) => prod.id !== id));
+    } catch (error) {
+      console.error("Error al eliminar de Firestore:", error);
+      alert("No se pudo eliminar de la base de datos");
     }
   };
 
@@ -72,39 +102,34 @@ function ModificarOpciones({ categoria, alVolver }) {
     const archivo = e.target.files[0];
     if (!archivo) return;
 
-    // Guardamos el archivo binario intacto indexado por el ID del producto
     setArchivosFotos((prev) => ({ ...prev, [id]: archivo }));
 
-    // Creamos la URL local temporal EXCLUSIVAMENTE para la vista previa visual en la interfaz
     const urlPrevia = URL.createObjectURL(archivo);
     manejarCambio(id, "imagen_url", urlPrevia);
   };
 
-  // Subir imagen a Supabase Storage
+  // Subir imagen a Firebase Storage
   const subirImagenStorage = async (idProducto, archivo) => {
-    // Sanitizamos el nombre del archivo para evitar caracteres extraños usando la marca de tiempo
-    const extension = archivo.name.split(".").pop();
-    const nombreArchivo = `${Date.now()}_${idProducto}.${extension}`;
+    try {
+      const extension = archivo.name.split(".").pop();
+      // Creamos la referencia de ruta dentro de Firebase Storage
+      const nombreArchivo = `productos-fotos/${Date.now()}_${idProducto}.${extension}`;
+      const storageRef = ref(storage, nombreArchivo);
 
-    const { error } = await supabase.storage
-      .from("productos-fotos")
-      .upload(nombreArchivo, archivo, { cacheControl: "3600", upsert: true });
-
-    if (error) {
-      console.error("Error al subir archivo a Storage:", error);
+      // Subimos el archivo binario raw
+      await uploadBytes(storageRef, archivo);
+      
+      // Obtenemos y retornamos la URL pública que expone Google Cloud
+      const urlPublica = await getDownloadURL(storageRef);
+      return urlPublica;
+    } catch (error) {
+      console.error("Error al subir archivo a Firebase Storage:", error);
       return null;
     }
-
-    const { data: publicUrlData } = supabase.storage
-      .from("productos-fotos")
-      .getPublicUrl(nombreArchivo);
-
-    return publicUrlData.publicUrl;
   };
 
-  // 4. GUARDAR CAMBIOS (CORREGIDO)
+  // 4. GUARDAR CAMBIOS (CORREGIDO Y OPTIMIZADO PARA BATCH DE FIRESTORE)
   const guardarCambios = async () => {
-    // Validación rápida antes de procesar llamadas a la base de datos
     const filaInvalida = productos.find(p => !p.nombre.trim());
     if (filaInvalida) {
       alert("Por favor, asigna un nombre válido a todos los productos antes de guardar.");
@@ -114,15 +139,14 @@ function ModificarOpciones({ categoria, alVolver }) {
     setCargando(true);
 
     try {
-      const paraInsertar = [];
-      const paraActualizar = [];
+      // Usamos un lote (batch) para agrupar todas las escrituras/actualizaciones en un solo viaje de red
+      const batch = writeBatch(db);
 
-      // Procesamos fila por fila para asegurar la correcta subida de archivos binarios
       for (const prod of productos) {
         const copia = { ...prod };
         const esTemporal = typeof copia.id === "string" && copia.id.startsWith("temp-");
 
-        // Si este producto específico tiene una foto nueva en cola de subida
+        // Si este producto específico tiene una foto en la cola local de subida
         if (archivosFotos[prod.id]) {
           const urlPublica = await subirImagenStorage(prod.id, archivosFotos[prod.id]);
           if (urlPublica) {
@@ -132,39 +156,26 @@ function ModificarOpciones({ categoria, alVolver }) {
           copia.imagen_url = "";
         }
 
-        // Limpieza de propiedades auxiliares
-        if (copia.tempId) delete copia.tempId;
-
         if (esTemporal) {
-          // Si es nuevo, quitamos la propiedad ID por completo para que funcione el Autoincrement
-          delete copia.id;
-          paraInsertar.push(copia);
+          // En Firestore, si queremos que genere un ID aleatorio único, creamos una referencia vacía
+          const nuevaDocRef = doc(collection(db, "datos"));
+          // Removemos el ID temporal interno para que no se guarde como campo redundante en el documento
+          delete copia.id; 
+          batch.set(nuevaDocRef, copia);
         } else {
-          // Si ya existe en la base de datos, va a la lista de actualización
-          paraActualizar.push(copia);
+          // Si ya existe, guardamos los cambios apuntando a su ID real existente
+          const docExistenteRef = doc(db, "datos", copia.id);
+          delete copia.id; // Evitamos duplicar el id de la clave dentro de los campos del mapeo
+          batch.set(docExistenteRef, copia, { merge: true }); // El merge asegura que no borre otros campos ocultos
         }
       }
 
-      // 1. Ejecutar inserción de productos nuevos (si los hay) utilizando .insert()
-      if (paraInsertar.length > 0) {
-        const { error: errorInsert } = await supabase
-          .from("datos")
-          .insert(paraInsertar);
-
-        if (errorInsert) throw errorInsert;
-      }
-
-      // 2. Ejecutar actualización de productos existentes utilizando .upsert()
-      if (paraActualizar.length > 0) {
-        const { error: errorUpsert } = await supabase
-          .from("datos")
-          .upsert(paraActualizar);
-
-        if (errorUpsert) throw errorUpsert;
-      }
+      // Confirmamos e impactamos todas las operaciones del lote de golpe
+      await batch.commit();
 
       alert(`¡Cambios en ${categoria.nombre} guardados con éxito!`);
-      // Limpiamos las referencias de blobs revocando accesos de memoria
+      
+      // Revocamos accesos de memoria local de las vistas previas
       Object.values(archivosFotos).forEach(file => {
         if (file instanceof File) {
           URL.revokeObjectURL(file);
@@ -173,7 +184,7 @@ function ModificarOpciones({ categoria, alVolver }) {
       alVolver();
 
     } catch (err) {
-      console.error("Detalle del error al guardar:", err);
+      console.error("Detalle del error al guardar en lote:", err);
       alert("Hubo un error al guardar los datos: " + (err.message || "Error interno"));
     } finally {
       setCargando(false);
@@ -213,6 +224,7 @@ function ModificarOpciones({ categoria, alVolver }) {
                     <div className="sin-foto">📸</div>
                   )}
                   <input
+                    type="file"
                     type="file"
                     accept="image/*"
                     id={`file-${prod.id}`}

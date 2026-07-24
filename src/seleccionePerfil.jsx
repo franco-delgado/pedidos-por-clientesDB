@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, useNavigate } from "react-router-dom";
-import { supabase } from "./lib/supabase";
+// Importamos la instancia de Firestore desde tu archivo de configuración centralizado
+import { db } from "./lib/firebise"; 
+// Importamos las herramientas en tiempo real nativas de Firebase
+import { collection, onSnapshot } from "firebase/firestore";
 
 // Importación de componentes de Clientes y Administración
 import Clientes from "./clientes/Clientes";
@@ -12,7 +15,7 @@ import ModificarOpciones from "./administracion/modificarOpciones";
 import DetalleMesa from "./administracion/mesas/DetalleMesa";
 import Cocina from "./cocina/cocina";
 
-// MODIFICACIÓN TEMPORAL: Acepta cualquier cambio para asegurar que el canal dispare la alerta
+// MODIFICACIÓN TEMPORAL: Mantenemos tu lógica de aceptar cualquier cambio para disparar la alerta
 const esAlertaRoja = (p) => {
   return true;
 };
@@ -65,7 +68,6 @@ function MenuPrincipal() {
         <button onClick={() => navigate("/administracion")}>
           Ser Administrator
         </button>
-        {/* Cambiado a /clientes/8 de forma temporal para desarrollo si entran desde el menú principal */}
         <button onClick={() => navigate("/clientes/8")}>Ser Cliente</button>
         <button onClick={() => navigate("/cocina")}>Ir a Cocina</button>
       </div>
@@ -76,30 +78,32 @@ function MenuPrincipal() {
 function SeleccionePerfil() {
   const [mesaSeleccionada, setMesaSeleccionada] = useState(null);
 
-  // Escucha global con diagnósticos reforzados
+  // Escucha global en segundo plano con onSnapshot de Firebase
   useEffect(() => {
     if (Notification.permission === "default") {
       Notification.requestPermission();
     }
 
-    const canal = supabase
-      .channel("alertas-visuales-globales")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "pedidos_clientes" },
-        (payload) => {
-          console.log(
-            "⚡ ¡Supabase envió datos en vivo! Payload completo:",
-            payload,
-          );
+    const coleccionRef = collection(db, "pedidos_clientes");
 
-          const nuevoMovimiento = payload.new;
+    // Escuchamos los cambios en la colección de forma persistente
+    const desuscribir = onSnapshot(coleccionRef, (snapshot) => {
+      console.log("⚡ ¡Firebase envió datos en vivo! Procesando cambios incrementales...");
 
-          if (nuevoMovimiento) {
+      // Con docChanges evaluamos únicamente eventos que acaban de ocurrir en la red
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === "added" || change.type === "modified") {
+          const nuevoMovimiento = change.doc.data();
+
+          if (nuevoMovimiento && esAlertaRoja(nuevoMovimiento)) {
             if (Notification.permission === "granted") {
               const titulo = `🚨 ¡Cambio en Mesa ${nuevoMovimiento.mesa || "?"}!`;
+              
+              // Compatibilidad para leer indistintamente campos con guion medio o bajo de forma segura
+              const nombrePedido = nuevoMovimiento["nombre_pedido"] || nuevoMovimiento["nombre-pedido"] || "Actualización de estado";
+
               const opciones = {
-                body: `Pedido: ${nuevoMovimiento["nombre-pedido"] || "Actualización de estado"}`,
+                body: `Pedido: ${nombrePedido}`,
                 icon: "/favicon.svg",
                 tag: "pedido-alerta",
                 renotify: true,
@@ -109,18 +113,19 @@ function SeleccionePerfil() {
             } else {
               console.log(
                 "⚠️ El permiso de notificación no está otorgado. Estado actual:",
-                Notification.permission,
+                Notification.permission
               );
             }
           }
-        },
-      )
-      .subscribe((status) => {
-        console.log("📡 Estado de la conexión Realtime:", status);
+        }
       });
+    }, (error) => {
+      console.error("Error en la escucha global de notificaciones:", error);
+    });
 
+    // Desuscribimos el canal de comunicación activa al desmontar la app
     return () => {
-      supabase.removeChannel(canal);
+      desuscribir();
     };
   }, []);
 
@@ -130,7 +135,7 @@ function SeleccionePerfil() {
         {/* 1. Ruta Principal */}
         <Route path="/" element={<MenuPrincipal />} />
 
-        {/* 2. Ruta para el Cliente CORREGIDA: Se añade /:idMesa */}
+        {/* 2. Ruta para el Cliente */}
         <Route
           path="/clientes/:idMesa"
           element={
