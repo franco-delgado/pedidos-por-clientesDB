@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, useNavigate } from "react-router-dom";
 // Importamos la instancia de Firestore desde tu archivo de configuración centralizado
-import { db } from "./lib/firebise"; 
+import { db, asegurarAutenticacion } from "./lib/firebise"; 
 // Importamos las herramientas en tiempo real nativas de Firebase
 import { collection, onSnapshot } from "firebase/firestore";
 
@@ -84,10 +84,21 @@ function SeleccionePerfil() {
       Notification.requestPermission();
     }
 
-    const coleccionRef = collection(db, "pedidos_clientes");
+    let desuscribir = () => {};
+    let cancelado = false;
 
-    // Escuchamos los cambios en la colección de forma persistente
-    const desuscribir = onSnapshot(coleccionRef, (snapshot) => {
+    // Nos autenticamos de forma anónima ANTES de abrir cualquier canal a
+    // Firestore/Storage, ya que las reglas de seguridad exigen
+    // request.auth != null. Esto corre una sola vez para toda la app
+    // (clientes, cocina y administración), sin pedir login ni contraseña.
+    asegurarAutenticacion()
+      .then(() => {
+        if (cancelado) return;
+
+        const coleccionRef = collection(db, "pedidos_clientes");
+
+        // Escuchamos los cambios en la colección de forma persistente
+        desuscribir = onSnapshot(coleccionRef, (snapshot) => {
       console.log("⚡ ¡Firebase envió datos en vivo! Procesando cambios incrementales...");
 
       // Con docChanges evaluamos únicamente eventos que acaban de ocurrir en la red
@@ -119,12 +130,17 @@ function SeleccionePerfil() {
           }
         }
       });
-    }, (error) => {
-      console.error("Error en la escucha global de notificaciones:", error);
-    });
+        }, (error) => {
+          console.error("Error en la escucha global de notificaciones:", error);
+        });
+      })
+      .catch((error) => {
+        console.error("No se pudo autenticar de forma anónima:", error);
+      });
 
     // Desuscribimos el canal de comunicación activa al desmontar la app
     return () => {
+      cancelado = true;
       desuscribir();
     };
   }, []);

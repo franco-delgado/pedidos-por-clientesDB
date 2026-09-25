@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 // Importamos la instancia de la base de datos de tu archivo de configuración
-import { db } from "../lib/firebise"; 
+import { db, asegurarAutenticacion } from "../lib/firebise"; 
 // Importamos los métodos nativos de Firestore
 import { 
   collection, 
@@ -36,6 +36,9 @@ function ModificarOpciones({ categoria, alVolver }) {
     async function obtenerProductos() {
       try {
         setCargando(true);
+        // Nos aseguramos de tener sesión (anónima) antes de tocar Firestore/Storage,
+        // ya que las reglas de seguridad exigen request.auth != null
+        await asegurarAutenticacion();
         const q = query(
           collection(db, "datos"),
           where("categoria", "==", categoria.nombre.toUpperCase())
@@ -224,7 +227,6 @@ function ModificarOpciones({ categoria, alVolver }) {
                     <div className="sin-foto">📸</div>
                   )}
                   <input
-                    type="file"
                     type="file"
                     accept="image/*"
                     id={`file-${prod.id}`}

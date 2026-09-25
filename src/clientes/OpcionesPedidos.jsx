@@ -211,21 +211,33 @@ function OpcionesPedidos({ categoria, alVolver }) {
                   src={prod.imagen_url}
                   alt={prod.nombre}
                   className="producto-foto-cliente"
+                  loading="lazy"
                 />
               ) : (
                 <div className="producto-sin-foto">📸</div>
               )}
+              {prod.stock <= 0 && (
+                <span className="badge-sin-stock">Sin stock</span>
+              )}
+            </div>
+
+            <div className="info-producto-menu">
+              <p className="nombre-producto-menu">{prod.nombre}</p>
+              <div className="fila-precio-stock">
+                <span className="precio-producto">${prod.precio}</span>
+                {prod.stock > 0 && (
+                  <span className="stock-producto">Stock: {prod.stock}</span>
+                )}
+              </div>
             </div>
 
             <button
-              className="opciones"
+              className="btn-agregar-producto"
               onClick={() => abrirModal(prod)}
               disabled={prod.stock <= 0}
             >
-              {prod.nombre} {prod.stock <= 0 ? "(Sin stock)" : ""}
+              {prod.stock <= 0 ? "Sin stock" : "Agregar +"}
             </button>
-            <p>${prod.precio}</p>
-            <small>Stock: {prod.stock}</small>
           </div>
         ))}
       </div>
