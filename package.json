@@ -1,32 +1,30 @@
 {
   "name": "pedidos-qr",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "cap:sync": "vite build && cap sync android",
+    "cap:abrir": "cap open android"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.4",
-    "@supabase/supabase-js": "^2.105.4",
+    "@capacitor/core": "^8.3.4",
     "firebase": "^12.16.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-router-dom": "^7.15.0"
   },
   "devDependencies": {
-    "@babel/core": "^7.29.0",
     "@capacitor/cli": "^8.3.4",
-    "@capacitor/core": "^8.3.4",
     "@eslint/js": "^10.0.1",
-    "@rolldown/plugin-babel": "^0.2.3",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
-    "babel-plugin-react-compiler": "^1.0.0",
     "eslint": "^10.2.1",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",

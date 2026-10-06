@@ -1,142 +1,95 @@
-// src/administracion/Pedidos.jsx
-import React, { useState, useEffect } from "react";
-import { db } from "../lib/firebise"; 
-import { 
-  collection, 
-  onSnapshot, 
-  doc, 
-  query, 
-  where, 
-  getDocs,
-  writeBatch 
-} from "firebase/firestore";
-import { useNavigate, useLocation } from "react-router-dom";
-import "./administracion.css";
+import { useMemo } from "react";
+import { useNavigate, useOutletContext } from "react-router-dom";
+import { doc, writeBatch } from "firebase/firestore";
+import { db } from "../lib/firebase";
+import { MESAS } from "../config";
+import { COLECCION_PEDIDOS, ESTADO, formatearDinero } from "../lib/pedidos";
 
-function Pedidos({ setMesaSeleccionada }) {
-  const mesas = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+const ETIQUETAS = {
+  [ESTADO.LIBRE]: "Libre",
+  [ESTADO.OCUPADA]: "Ocupada",
+  [ESTADO.NUEVO]: "Nuevo pedido",
+};
+
+export default function Pedidos() {
   const navigate = useNavigate();
-  const location = useLocation();
+  const { pedidos, estadoMesas, cargando } = useOutletContext();
 
-  // Tomamos el estado que nos envió Administracion.jsx, o iniciamos vacío si no hay
-  const [estadoMesas, setEstadoMesas] = useState(
-    location.state?.estadoMesas || {},
+  // Total, cantidad de ítems y si pidió la cuenta, por mesa
+  const resumen = useMemo(() => {
+    const r = Object.fromEntries(MESAS.map((n) => [n, { total: 0, items: 0, pideCuenta: false }]));
+    pedidos.forEach((p) => {
+      if (!r[p.mesa]) return;
+      if (p.esCuenta) r[p.mesa].pideCuenta = true;
+      else {
+        r[p.mesa].total += p.subtotal;
+        r[p.mesa].items += p.cantidad;
+      }
+    });
+    return r;
+  }, [pedidos]);
+
+  const conteo = useMemo(
+    () => ({
+      libres: MESAS.filter((n) => estadoMesas[n] === ESTADO.LIBRE).length,
+      ocupadas: MESAS.filter((n) => estadoMesas[n] === ESTADO.OCUPADA).length,
+      alertas: MESAS.filter((n) => estadoMesas[n] === ESTADO.NUEVO).length,
+    }),
+    [estadoMesas],
   );
 
-  // Escucha activa en TIEMPO REAL con onSnapshot de Firebase
-  useEffect(() => {
-    const q = collection(db, "pedidos_clientes");
+  // Al abrir la mesa se "reconocen" los pedidos nuevos (dejan de ser alerta).
+  // La solicitud de cuenta sigue en rojo hasta que se cobra.
+  const abrirMesa = async (num) => {
+    navigate(`/administracion/mesas/${num}`);
 
-    const desuscribir = onSnapshot(q, (snapshot) => {
-      setEstadoMesas((prev) => {
-        const copia = { ...prev };
-
-        snapshot.docChanges().forEach((change) => {
-          const p = change.doc.data();
-
-          if (change.type === "added" || change.type === "modified") {
-            const nombrePedido = p["nombre-pedido"] || p["nombre_pedido"] || "";
-            
-            const esRoja =
-              p.espacio === "pedido_nuevo" ||
-              p.espacio === 2 ||
-              nombrePedido === "SOLICITUD DE CUENTA";
-
-            if (esRoja) {
-              copia[p.mesa] = "pedido_nuevo";
-            } else if (p.espacio === "ocupada" || p.espacio === 1) {
-              copia[p.mesa] = "ocupada";
-            } else if (p.espacio === "libre") {
-              copia[p.mesa] = "libre";
-            }
-          } 
-
-          // MANEJAR DOCUMENTOS ELIMINADOS
-          // Al vaciar los pedidos de la mesa desde DetalleMesa, la devolvemos a 'libre'
-          if (change.type === "removed") {
-            copia[p.mesa] = "libre";
-          }
-        });
-
-        return copia;
-      });
-    });
-
-    // Desuscribimos la escucha en tiempo real al desmontar para proteger los recursos
-    return () => desuscribir();
-  }, []);
-
-  const irAMesa = async (num) => {
-    if (typeof setMesaSeleccionada === "function") {
-      setMesaSeleccionada(num);
-    }
-    setEstadoMesas((prev) => ({ ...prev, [num]: "ocupada" }));
+    const nuevos = pedidos.filter((p) => p.mesa === num && p.esAlerta && !p.esCuenta);
+    if (nuevos.length === 0) return;
 
     try {
-      // Buscamos los documentos activos que pertenecen a la mesa seleccionada
-      const q = query(
-        collection(db, "pedidos_clientes"),
-        where("mesa", "==", num)
-      );
-      
-      const querySnapshot = await getDocs(q);
-
-      if (!querySnapshot.empty) {
-        // Inicializamos un lote (Batch) para procesar todas las actualizaciones juntas
-        const batch = writeBatch(db);
-        let hayCambios = false;
-
-        querySnapshot.docs.forEach((documento) => {
-          const datosDoc = documento.data();
-          const nombrePedido = datosDoc["nombre-pedido"] || datosDoc["nombre_pedido"] || "";
-
-          // Excluimos las solicitudes de cuenta del cambio automático según las reglas de tu app
-          if (nombrePedido !== "SOLICITUD DE CUENTA") {
-            const docRef = doc(db, "pedidos_clientes", documento.id);
-            batch.update(docRef, { espacio: "ocupada" });
-            hayCambios = true;
-          }
-        });
-
-        // Solo impactamos la base de datos si encontramos registros válidos para actualizar
-        if (hayCambios) {
-          await batch.commit();
-        }
-      }
-
+      const lote = writeBatch(db);
+      nuevos.forEach((p) => lote.update(doc(db, COLECCION_PEDIDOS, p.id), { espacio: ESTADO.OCUPADA }));
+      await lote.commit();
     } catch (error) {
-      console.error("Error al actualizar el estado de la mesa mediante lote en Firebase:", error);
+      console.error("No se pudieron marcar los pedidos como vistos:", error);
     }
-
-    navigate("/DetalleMesas");
   };
 
   return (
-    <div className="admin-page">
-      <header className="superior">
-        <h1>PANEL DE CONTROL - ADMINISTRACIÓN</h1>
+    <>
+      <header className="admin-titulo">
+        <h1>Mesas</h1>
+        <div className="resumen-chips">
+          <span className="chip chip-libre">{conteo.libres} libres</span>
+          <span className="chip chip-ocupada">{conteo.ocupadas} ocupadas</span>
+          <span className="chip chip-nuevo">{conteo.alertas} con alerta</span>
+        </div>
       </header>
-      <main className="grid-mesas">
-        {mesas.map((num) => {
-          const est = estadoMesas[num] || "libre";
-          return (
-            <div
-              key={num}
-              onClick={() => irAMesa(num)}
-              className={`contenedor-mesa ${est}`}
-            >
-              <h3>MESA {num}</h3>
-              <p className="texto-estado">
-                {est === "libre" && "🟢 Libre"}
-                {est === "ocupada" && "🟡 Ocupada"}
-                {est === "pedido_nuevo" && "🔴 ¡NUEVO PEDIDO / CUENTA!"}
-              </p>
-            </div>
-          );
-        })}
-      </main>
-    </div>
+
+      {cargando ? (
+        <div className="spinner" aria-label="Cargando" />
+      ) : (
+        <div className="grid-mesas">
+          {MESAS.map((num) => {
+            const estado = estadoMesas[num] || ESTADO.LIBRE;
+            const { total, items, pideCuenta } = resumen[num];
+            return (
+              <button key={num} className={`mesa-card mesa-${estado}`} onClick={() => abrirMesa(num)}>
+                <span className="mesa-num">Mesa {num}</span>
+                <span className="mesa-estado">{pideCuenta ? "🛎️ Pide la cuenta" : ETIQUETAS[estado]}</span>
+                {items > 0 ? (
+                  <span className="mesa-total">
+                    {formatearDinero(total)}
+                    <small>{items} {items === 1 ? "ítem" : "ítems"}</small>
+                  </span>
+                ) : (
+                  <span className="mesa-total mesa-total-vacio">—</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </>
   );
 }
-
-export default Pedidos;

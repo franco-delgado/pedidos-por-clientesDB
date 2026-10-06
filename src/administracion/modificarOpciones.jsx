@@ -1,306 +1,267 @@
-import React, { useState, useEffect } from "react";
-// Importamos la instancia de la base de datos de tu archivo de configuración
-import { db, asegurarAutenticacion } from "../lib/firebise"; 
-// Importamos los métodos nativos de Firestore
-import { 
-  collection, 
-  query, 
-  where, 
-  getDocs, 
-  doc, 
-  addDoc, 
-  setDoc, 
-  deleteDoc, 
-  writeBatch 
-} from "firebase/firestore";
-// Importamos las herramientas para manejar las imágenes en Firebase Storage
-import { 
-  getStorage, 
-  ref, 
-  uploadBytes, 
-  getDownloadURL 
-} from "firebase/storage";
-import "./administracion.css";
+import { useEffect, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { collection, deleteDoc, doc, getDocs, query, where, writeBatch } from "firebase/firestore";
+import { getDownloadURL, getStorage, ref, uploadBytes } from "firebase/storage";
+import { db } from "../lib/firebase";
+import { buscarCategoria, claveCategoria } from "../config";
+import { useToast } from "../hooks/toastContext";
 
-function ModificarOpciones({ categoria, alVolver }) {
+const MAX_LADO_FOTO = 900; // px: las fotos de celular (4-8 MB) se reducen antes de subirlas
+
+// Reduce y comprime la imagen en el navegador para que el menú cargue rápido
+async function comprimirImagen(archivo) {
+  try {
+    const bitmap = await createImageBitmap(archivo);
+    const escala = Math.min(1, MAX_LADO_FOTO / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * escala);
+    canvas.height = Math.round(bitmap.height * escala);
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#fff"; // evita fondo negro en PNG con transparencia
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close?.();
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.82));
+    return blob || archivo;
+  } catch {
+    return archivo;
+  }
+}
+
+const esTemporal = (id) => typeof id === "string" && id.startsWith("temp-");
+
+export default function ModificarOpciones() {
+  const { idCategoria } = useParams();
+  const navigate = useNavigate();
+  const toast = useToast();
+
+  const categoria = buscarCategoria(idCategoria);
+  const clave = categoria ? claveCategoria(categoria) : null;
+
   const [productos, setProductos] = useState([]);
-  const [cargando, setCargando] = useState(true);
-  // Guardamos los archivos seleccionados usando el id (temporal o real) como clave
+  const [cargado, setCargado] = useState(null); // categoría cuyos datos ya se cargaron
   const [archivosFotos, setArchivosFotos] = useState({});
+  const [guardando, setGuardando] = useState(false);
 
-  // Inicializamos Firebase Storage pasándole la configuración de la app
-  const storage = getStorage();
-
-  // 1. CARGAR DATOS EXISTENTES DESDE FIRESTORE
   useEffect(() => {
-    async function obtenerProductos() {
-      try {
-        setCargando(true);
-        // Nos aseguramos de tener sesión (anónima) antes de tocar Firestore/Storage,
-        // ya que las reglas de seguridad exigen request.auth != null
-        await asegurarAutenticacion();
-        const q = query(
-          collection(db, "datos"),
-          where("categoria", "==", categoria.nombre.toUpperCase())
+    if (!clave) return;
+    let activo = true;
+
+    getDocs(query(collection(db, "datos"), where("categoria", "==", clave)))
+      .then((snapshot) => {
+        if (!activo) return;
+        setProductos(
+          snapshot.docs
+            .map((d) => ({ id: d.id, ...d.data() }))
+            .sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), "es")),
         );
-        
-        const querySnapshot = await getDocs(q);
-        const listaProductos = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-        
-        setProductos(listaProductos);
-      } catch (error) {
-        console.error("Error al cargar productos desde Firestore:", error);
-      } finally {
-        setCargando(false);
-      }
-    }
-    obtenerProductos();
-  }, [categoria.nombre]);
+        setArchivosFotos({});
+        setCargado(clave);
+      })
+      .catch((error) => {
+        console.error("Error al cargar productos:", error);
+        if (!activo) return;
+        toast.mostrar("No se pudieron cargar los productos.", "error");
+        setCargado(clave);
+      });
 
-  // 2. AGREGAR LOCALMENTE
-  const agregarProducto = () => {
-    const nuevo = {
-      id: `temp-${Date.now()}`,
-      nombre: "",
-      precio: 0,
-      stock: 0,
-      imagen_url: "", 
-      categoria: categoria.nombre.toUpperCase(),
+    return () => {
+      activo = false;
     };
-    setProductos([...productos, nuevo]);
-  };
+  }, [clave, toast]);
 
-  // 3. ELIMINAR UN DOCUMENTO
-  const eliminarProducto = async (id) => {
-    if (typeof id === "string" && id.startsWith("temp-")) {
-      setProductos(productos.filter((prod) => prod.id !== id));
-      const nuevosArchivos = { ...archivosFotos };
-      delete nuevosArchivos[id];
-      setArchivosFotos(nuevosArchivos);
-      return;
-    }
+  const volver = <Link to="/administracion/precios" className="volver">← Categorías</Link>;
 
-    try {
-      // En Firestore eliminamos directamente apuntando a la referencia del ID del doc
-      await deleteDoc(doc(db, "datos", id));
-      setProductos(productos.filter((prod) => prod.id !== id));
-    } catch (error) {
-      console.error("Error al eliminar de Firestore:", error);
-      alert("No se pudo eliminar de la base de datos");
-    }
-  };
-
-  const manejarCambio = (id, campo, valor) => {
-    const nuevosProductos = productos.map((p) =>
-      p.id === id ? { ...p, [campo]: valor } : p
+  if (!categoria) {
+    return (
+      <>
+        {volver}
+        <div className="card estado-vacio">Esa categoría no existe.</div>
+      </>
     );
-    setProductos(nuevosProductos);
+  }
+
+  const cargando = cargado !== clave;
+
+  const agregarProducto = () => {
+    setProductos((prev) => [
+      { id: `temp-${Date.now()}`, nombre: "", precio: "", stock: "", imagen_url: "", categoria: clave },
+      ...prev,
+    ]);
   };
 
-  // Manejar la selección local del archivo de imagen
-  const manejarCambioFoto = (id, e) => {
+  const cambiar = (id, campo, valor) =>
+    setProductos((prev) => prev.map((p) => (p.id === id ? { ...p, [campo]: valor } : p)));
+
+  const cambiarFoto = (id, e) => {
     const archivo = e.target.files[0];
     if (!archivo) return;
-
     setArchivosFotos((prev) => ({ ...prev, [id]: archivo }));
-
-    const urlPrevia = URL.createObjectURL(archivo);
-    manejarCambio(id, "imagen_url", urlPrevia);
+    cambiar(id, "imagen_url", URL.createObjectURL(archivo)); // vista previa local
   };
 
-  // Subir imagen a Firebase Storage
-  const subirImagenStorage = async (idProducto, archivo) => {
+  const eliminar = async (prod) => {
+    if (esTemporal(prod.id)) {
+      setProductos((prev) => prev.filter((p) => p.id !== prod.id));
+      return;
+    }
+    if (!window.confirm(`¿Eliminar "${prod.nombre || "este producto"}" definitivamente?`)) return;
     try {
-      const extension = archivo.name.split(".").pop();
-      // Creamos la referencia de ruta dentro de Firebase Storage
-      const nombreArchivo = `productos-fotos/${Date.now()}_${idProducto}.${extension}`;
-      const storageRef = ref(storage, nombreArchivo);
-
-      // Subimos el archivo binario raw
-      await uploadBytes(storageRef, archivo);
-      
-      // Obtenemos y retornamos la URL pública que expone Google Cloud
-      const urlPublica = await getDownloadURL(storageRef);
-      return urlPublica;
+      await deleteDoc(doc(db, "datos", prod.id));
+      setProductos((prev) => prev.filter((p) => p.id !== prod.id));
+      toast.mostrar("Producto eliminado.", "ok");
     } catch (error) {
-      console.error("Error al subir archivo a Firebase Storage:", error);
-      return null;
+      console.error("Error al eliminar:", error);
+      toast.mostrar("No se pudo eliminar el producto.", "error");
     }
   };
 
-  // 4. GUARDAR CAMBIOS (CORREGIDO Y OPTIMIZADO PARA BATCH DE FIRESTORE)
-  const guardarCambios = async () => {
-    const filaInvalida = productos.find(p => !p.nombre.trim());
-    if (filaInvalida) {
-      alert("Por favor, asigna un nombre válido a todos los productos antes de guardar.");
+  const subirFoto = async (id, archivo) => {
+    const blob = await comprimirImagen(archivo);
+    const extension = blob === archivo ? archivo.name.split(".").pop() : "jpg";
+    const referencia = ref(getStorage(), `productos-fotos/${Date.now()}_${id}.${extension}`);
+    await uploadBytes(referencia, blob, { contentType: blob.type || undefined });
+    return getDownloadURL(referencia);
+  };
+
+  const guardar = async () => {
+    if (productos.some((p) => !String(p.nombre).trim())) {
+      toast.mostrar("Todos los productos necesitan un nombre.", "error");
+      return;
+    }
+    if (productos.some((p) => Number(p.precio) < 0 || Number(p.stock) < 0)) {
+      toast.mostrar("Precio y stock no pueden ser negativos.", "error");
       return;
     }
 
-    setCargando(true);
-
+    setGuardando(true);
     try {
-      // Usamos un lote (batch) para agrupar todas las escrituras/actualizaciones en un solo viaje de red
-      const batch = writeBatch(db);
+      // 1) Subir en paralelo sólo las fotos nuevas
+      const urls = {};
+      await Promise.all(
+        Object.entries(archivosFotos)
+          .filter(([id]) => productos.some((p) => p.id === id))
+          .map(async ([id, archivo]) => {
+            urls[id] = await subirFoto(id, archivo);
+          }),
+      );
 
-      for (const prod of productos) {
-        const copia = { ...prod };
-        const esTemporal = typeof copia.id === "string" && copia.id.startsWith("temp-");
-
-        // Si este producto específico tiene una foto en la cola local de subida
-        if (archivosFotos[prod.id]) {
-          const urlPublica = await subirImagenStorage(prod.id, archivosFotos[prod.id]);
-          if (urlPublica) {
-            copia.imagen_url = urlPublica;
-          }
-        } else if (esTemporal) {
-          copia.imagen_url = "";
-        }
-
-        if (esTemporal) {
-          // En Firestore, si queremos que genere un ID aleatorio único, creamos una referencia vacía
-          const nuevaDocRef = doc(collection(db, "datos"));
-          // Removemos el ID temporal interno para que no se guarde como campo redundante en el documento
-          delete copia.id; 
-          batch.set(nuevaDocRef, copia);
-        } else {
-          // Si ya existe, guardamos los cambios apuntando a su ID real existente
-          const docExistenteRef = doc(db, "datos", copia.id);
-          delete copia.id; // Evitamos duplicar el id de la clave dentro de los campos del mapeo
-          batch.set(docExistenteRef, copia, { merge: true }); // El merge asegura que no borre otros campos ocultos
-        }
-      }
-
-      // Confirmamos e impactamos todas las operaciones del lote de golpe
-      await batch.commit();
-
-      alert(`¡Cambios en ${categoria.nombre} guardados con éxito!`);
-      
-      // Revocamos accesos de memoria local de las vistas previas
-      Object.values(archivosFotos).forEach(file => {
-        if (file instanceof File) {
-          URL.revokeObjectURL(file);
-        }
+      // 2) Guardar todos los productos en un solo lote
+      const lote = writeBatch(db);
+      productos.forEach((prod) => {
+        const { id, ...resto } = prod;
+        const datos = {
+          ...resto,
+          nombre: String(prod.nombre).trim(),
+          precio: Number(prod.precio) || 0,
+          stock: Math.max(0, Math.floor(Number(prod.stock) || 0)),
+          imagen_url: urls[id] ?? (esTemporal(id) ? "" : prod.imagen_url || ""),
+          categoria: clave,
+        };
+        const referencia = esTemporal(id) ? doc(collection(db, "datos")) : doc(db, "datos", id);
+        lote.set(referencia, datos, { merge: true });
       });
-      alVolver();
+      await lote.commit();
 
-    } catch (err) {
-      console.error("Detalle del error al guardar en lote:", err);
-      alert("Hubo un error al guardar los datos: " + (err.message || "Error interno"));
-    } finally {
-      setCargando(false);
+      toast.mostrar(`Cambios en ${categoria.nombre} guardados.`, "ok");
+      navigate("/administracion/precios");
+    } catch (error) {
+      console.error("Error al guardar:", error);
+      toast.mostrar(`No se pudo guardar: ${error.message || "error interno"}`, "error");
+      setGuardando(false);
     }
   };
 
-  if (cargando) return <p>Procesando productos de {categoria.nombre}...</p>;
-
   return (
-    <div className="editor-container">
-      <header className="superior">
-        <button onClick={alVolver} className="btn-atras">
-          ← Atrás
-        </button>
-        <h1>EDITANDO: {categoria?.nombre?.toUpperCase()}</h1>
-        <button onClick={agregarProducto} className="btn-agregar">
-          + Añadir Producto
+    <>
+      {volver}
+      <header className="admin-titulo">
+        <h1>{categoria.emoji} {categoria.nombre}</h1>
+        <button className="btn btn-outline" onClick={agregarProducto} disabled={cargando || guardando}>
+          + Producto
         </button>
       </header>
 
-      <div className="formulario-edicion">
-        {productos.length === 0 ? (
-          <p style={{ textAlign: "center", padding: "20px" }}>
-            No hay productos cargados en esta categoría.
-          </p>
-        ) : (
-          productos.map((prod) => (
-            <div key={prod.id} className="item-editar">
-              
-              {/* Grupo: Vista previa y Foto */}
-              <div className="input-group-foto">
-                <label>Foto</label>
-                <div className="contenedor-foto-preview">
-                  {prod.imagen_url ? (
-                    <img src={prod.imagen_url} alt="Preview" className="foto-preview" />
-                  ) : (
-                    <div className="sin-foto">📸</div>
-                  )}
+      {cargando ? (
+        <div className="spinner" aria-label="Cargando" />
+      ) : productos.length === 0 ? (
+        <div className="card estado-vacio">No hay productos en esta categoría. Agregá el primero con «+ Producto».</div>
+      ) : (
+        <div className="ed-lista">
+          {productos.map((prod) => (
+            <article key={prod.id} className="card ed-fila">
+              <div className="ed-foto">
+                {prod.imagen_url ? (
+                  <img src={prod.imagen_url} alt="" />
+                ) : (
+                  <span aria-hidden="true">📸</span>
+                )}
+                <input
+                  type="file"
+                  accept="image/*"
+                  id={`file-${prod.id}`}
+                  className="ed-file"
+                  onChange={(e) => cambiarFoto(prod.id, e)}
+                />
+                <label htmlFor={`file-${prod.id}`} className="ed-foto-btn">Foto</label>
+              </div>
+
+              <div className="ed-campos">
+                <label className="campo">
+                  Producto
                   <input
-                    type="file"
-                    accept="image/*"
-                    id={`file-${prod.id}`}
-                    className="input-file-oculto"
-                    onChange={(e) => manejarCambioFoto(prod.id, e)}
+                    className="input"
+                    type="text"
+                    placeholder="Ej: Cappuccino"
+                    value={prod.nombre}
+                    onChange={(e) => cambiar(prod.id, "nombre", e.target.value)}
                   />
-                  <label htmlFor={`file-${prod.id}`} className="btn-subir-foto">
-                    Seleccionar
+                </label>
+                <div className="ed-numeros">
+                  <label className="campo">
+                    Precio ($)
+                    <input
+                      className="input"
+                      type="number"
+                      inputMode="decimal"
+                      min="0"
+                      step="any"
+                      placeholder="0"
+                      value={prod.precio}
+                      onChange={(e) => cambiar(prod.id, "precio", e.target.value)}
+                    />
+                  </label>
+                  <label className="campo">
+                    Stock
+                    <input
+                      className="input"
+                      type="number"
+                      inputMode="numeric"
+                      min="0"
+                      step="1"
+                      placeholder="0"
+                      value={prod.stock}
+                      onChange={(e) => cambiar(prod.id, "stock", e.target.value)}
+                    />
                   </label>
                 </div>
               </div>
 
-              {/* Grupo: Nombre */}
-              <div className="input-group">
-                <label>Producto</label>
-                <input
-                  type="text"
-                  placeholder="Ej: Camisa"
-                  value={prod.nombre}
-                  onChange={(e) =>
-                    manejarCambio(prod.id, "nombre", e.target.value)
-                  }
-                />
-              </div>
-
-              {/* Grupo: Stock */}
-              <div className="input-group-corto">
-                <label>Stock</label>
-                <input
-                  type="number"
-                  placeholder="0"
-                  value={prod.stock}
-                  onChange={(e) =>
-                    manejarCambio(prod.id, "stock", parseInt(e.target.value) || 0)
-                  }
-                />
-              </div>
-
-              {/* Grupo: Precio */}
-              <div className="input-group-corto">
-                <label>Precio ($)</label>
-                <input
-                  type="number"
-                  placeholder="0.00"
-                  value={prod.precio}
-                  onChange={(e) =>
-                    manejarCambio(
-                      prod.id,
-                      "precio",
-                      parseFloat(e.target.value) || 0,
-                    )
-                  }
-                />
-              </div>
-
-              <button
-                className="btn-eliminar"
-                onClick={() => eliminarProducto(prod.id)}
-                title="Eliminar"
-              >
+              <button className="icono-btn" aria-label="Eliminar producto" onClick={() => eliminar(prod)}>
                 🗑️
               </button>
-            </div>
-          ))
-        )}
-      </div>
+            </article>
+          ))}
+        </div>
+      )}
 
-      <footer className="footer-controles">
-        <button className="btn-guardar-todo" onClick={guardarCambios}>
-          Guardar todo en {categoria.nombre}
-        </button>
-      </footer>
-    </div>
+      {!cargando && (
+        <div className="barra-guardar">
+          <button className="btn btn-primary btn-grande" onClick={guardar} disabled={guardando}>
+            {guardando ? "Guardando…" : `Guardar cambios en ${categoria.nombre}`}
+          </button>
+        </div>
+      )}
+    </>
   );
 }
-
-export default ModificarOpciones;

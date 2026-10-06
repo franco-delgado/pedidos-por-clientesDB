@@ -1,53 +1,22 @@
-import React, { useState } from "react";
-import ModificarOpciones from "./modificarOpciones";
-import "./administracion.css";
+import { Link } from "react-router-dom";
+import { CATEGORIAS } from "../config";
 
-function Precios({ alVolver }) {
-  const [categoriaSeleccionada, setCategoriaSeleccionada] = useState(null);
-
-  // 1. Pasamos la lista al estado para que sea editable
-  const [listaCategorias] = useState([
-    { id: "bebidas", nombre: "Bebidas" },
-    { id: "cafe", nombre: "Café" },
-    { id: "desayuno", nombre: "Desayuno" },
-    { id: "frappe", nombre: "Frappe" },
-    { id: "licuados", nombre: "Licuados" },
-    { id: "panificacion", nombre: "Panificación" },
-    { id: "picadas", nombre: "Picadas" },
-    { id: "pizza", nombre: "Pizzas" },
-    { id: "postres", nombre: "Postres" },
-    { id: "waffles", nombre: "Waffles" },
-  ]);
-
-  if (categoriaSeleccionada) {
-    return (
-      <ModificarOpciones
-        categoria={categoriaSeleccionada}
-        alVolver={() => setCategoriaSeleccionada(null)}
-      />
-    );
-  }
-
+export default function Precios() {
   return (
-    <div className="precios-container">
-      <header className="superior">
-        <h2>PRECIOS</h2>
+    <>
+      <header className="admin-titulo">
+        <h1>Precios y productos</h1>
       </header>
+      <p className="texto-suave">Elegí una categoría para editar precios, stock y fotos, o agregar productos.</p>
 
-      <div className="cuerpo">
-        {listaCategorias.map((cat) => (
-          <p
-            key={cat.id}
-            className={`opciones ${cat.id}`}
-            //Al hacer click: Guardamos la categoria en el estado
-            onClick={() => setCategoriaSeleccionada(cat)}
-          >
-            {cat.nombre}
-          </p>
+      <div className="categorias-grid categorias-admin">
+        {CATEGORIAS.map((cat) => (
+          <Link key={cat.id} to={cat.id} className="categoria-tile">
+            <span className="categoria-emoji" aria-hidden="true">{cat.emoji}</span>
+            <span className="categoria-nombre">{cat.nombre}</span>
+          </Link>
         ))}
       </div>
-    </div>
+    </>
   );
 }
-
-export default Precios;

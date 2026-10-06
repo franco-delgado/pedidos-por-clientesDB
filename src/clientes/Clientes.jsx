@@ -1,82 +1,50 @@
 import { useState } from "react";
-// import { useParams } from "react-router-dom"; // <-- DESCOMENTAR EN PRODUCCIÓN
-import OpcionesPedidos from "./OpcionesPedidos";
-import Cuenta from "./Cuenta";
-import FooterComponent from "../FooterComponent";
+import { Link, Outlet, useParams } from "react-router-dom";
+import { MESAS } from "../config";
+import { useCarrito } from "../hooks/useCarrito";
+import { formatearDinero } from "../lib/pedidos";
+import Carrito from "./Carrito";
 import "./Clientes.css";
 
-function Clientes({ alVolver }) {
-  // --- CONFIGURACIÓN DE MESA (TEMPORAL / PRODUCCIÓN) ---
-  const mesa = 8; // Temporal: Cambia este número para probar otras mesas en desarrollo
-
-  /* 
-     PARA PRODUCCIÓN: Descomenta las líneas de abajo y borra la línea de arriba
-     const { idMesa } = useParams(); 
-     const mesa = idMesa;
-  */
-  // -----------------------------------------------------
-
-  const [categoriaSeleccionada, setCategoriaSeleccionada] = useState(null);
-
-  const [listaCategorias] = useState([
-    { id: "bebidas", nombre: "Bebidas" },
-    { id: "cafe", nombre: "Café" },
-    { id: "desayuno", nombre: "Desayuno" },
-    { id: "frappe", nombre: "Frappe" },
-    { id: "licuados", nombre: "Licuados" },
-    { id: "panificacion", nombre: "Panificación" },
-    { id: "picadas", nombre: "Picadas" },
-    { id: "pizza", nombre: "Pizzas" },
-    { id: "postres", nombre: "Postres" },
-    { id: "waffles", nombre: "Waffles" },
-  ]);
-
-  if (categoriaSeleccionada === "cuenta") {
-    return (
-      <Cuenta mesa={mesa} alVolver={() => setCategoriaSeleccionada(null)} />
-    );
-  } else if (categoriaSeleccionada) {
-    return (
-      <OpcionesPedidos
-        categoria={categoriaSeleccionada}
-        alVolver={() => setCategoriaSeleccionada(null)}
-      />
-    );
-  }
+// La mesa sale de la URL del QR: /clientes/5
+function ClientesMesa({ mesa }) {
+  const carrito = useCarrito(mesa);
+  const [carritoAbierto, setCarritoAbierto] = useState(false);
 
   return (
-    <>
-      <div className="contenedor-logo">
-        <p className="detalle-cuenta">
-          Esta cuenta está habilitada para realizar los pedidos
-        </p>
-      </div>
+    <div className="clientes">
+      <Outlet context={{ mesa, carrito }} />
 
-      <div className="menuPrincipal">
-        <div className="cuerpo">
-          {listaCategorias.map((cat) => (
-            <p
-              key={cat.id}
-              className={`opciones ${cat.id}`}
-              onClick={() => setCategoriaSeleccionada(cat)}
-            >
-              {cat.nombre}
-            </p>
-          ))}
-        </div>
-        <p
-          className="opciones"
-          id="cuenta"
-          onClick={() => setCategoriaSeleccionada("cuenta")}
-        >
-          CUENTA
-        </p>
-      </div>
-      <div className="footer">
-        <FooterComponent />
-      </div>
-    </>
+      {carrito.cantidadTotal > 0 && !carritoAbierto && (
+        <button className="barra-carrito" onClick={() => setCarritoAbierto(true)}>
+          <span className="barra-carrito-cant">{carrito.cantidadTotal}</span>
+          <span>Ver mi pedido</span>
+          <strong>{formatearDinero(carrito.total)}</strong>
+        </button>
+      )}
+
+      {carritoAbierto && (
+        <Carrito mesa={mesa} carrito={carrito} onCerrar={() => setCarritoAbierto(false)} />
+      )}
+    </div>
   );
 }
 
-export default Clientes;
+export default function Clientes() {
+  const { idMesa } = useParams();
+  const mesa = Number(idMesa);
+
+  if (!MESAS.includes(mesa)) {
+    return (
+      <div className="clientes">
+        <div className="card estado-vacio">
+          <p>La mesa «{idMesa}» no existe.</p>
+          <Link className="btn btn-primary" to="/">Volver al inicio</Link>
+        </div>
+      </div>
+    );
+  }
+
+  // key: al cambiar de mesa se reinicia el carrito en memoria
+  return <ClientesMesa key={mesa} mesa={mesa} />;
+}

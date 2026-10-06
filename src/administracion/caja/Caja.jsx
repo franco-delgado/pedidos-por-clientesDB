@@ -1,150 +1,151 @@
-import { useState, useEffect } from "react";
-import { db } from "../../lib/firebise"; // Mantenemos tu ruta al archivo de configuración
-import { 
-  collection, 
-  getDocs, 
-  doc, 
-  deleteDoc, 
-  writeBatch 
-} from "firebase/firestore";
+import { useEffect, useMemo, useState } from "react";
+import { collection, doc, onSnapshot, writeBatch } from "firebase/firestore";
+import { db } from "../../lib/firebase";
+import { MESAS } from "../../config";
+import { formatearDinero } from "../../lib/pedidos";
+import { useToast } from "../../hooks/toastContext";
 
-function Administracion() {
-  const [ventas, setVentas] = useState([]);
-  const [cargando, setCargando] = useState(true);
+const LOTE_MAXIMO = 400; // Firestore admite hasta 500 operaciones por lote
 
-  // Función para traer el historial de cobros desde Firebase
-  const cargarVentas = async () => {
-    try {
-      setCargando(true);
-      
-      // 1. Obtenemos la referencia directa a la colección "caja"
-      const querySnapshot = await getDocs(collection(db, "caja"));
-
-      // 2. Mapeamos los documentos para construir el array de objetos
-      const listaVentas = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-
-      // 3. Guardamos las ventas en el estado
-      setVentas(listaVentas);
-
-    } catch (error) {
-      console.error("Error al cargar los datos de caja:", error);
-      alert(
-        "No se pudieron cargar las ventas. Revisá las Reglas de Seguridad (Rules) de la colección 'caja' en Firebase."
-      );
-    } finally {
-      setCargando(false);
-    }
-  };
+export default function Caja() {
+  const toast = useToast();
+  const [ventas, setVentas] = useState(null); // null = cargando
+  const [borrando, setBorrando] = useState(false);
 
   useEffect(() => {
-    cargarVentas();
-  }, []);
-
-  // LÓGICA: Sumamos los totales acumulados agrupándolos por número de mesa
-  const totalesPorMesa = ventas.reduce((acc, curr) => {
-    const numeroMesa = curr.mesa; 
-    // Ojo acá: si en Firebase migraste los campos con guiones modificá estos strings por "cantidad-pedido", etc.
-    const cantidad = Number(curr.cantidad_pedido) || 0;
-    const precio = Number(curr.precio_pedido) || 0;
-    const subtotalRegistro = cantidad * precio;
-
-    acc[numeroMesa] = (acc[numeroMesa] || 0) + subtotalRegistro;
-    return acc;
-  }, {});
-
-  // Suma total histórica de todas las mesas juntas
-  const totalFinal = Object.values(totalesPorMesa).reduce((a, b) => a + b, 0);
-
-  // Función para vaciar por completo el historial de caja en Firebase
-  const eliminarHistorialCaja = async () => {
-    const confirmar = window.confirm(
-      "¿ESTÁS SEGURO? Esta acción borrará TODO el historial de recaudación de la caja definitivamente.",
+    return onSnapshot(
+      collection(db, "caja"),
+      (snapshot) => setVentas(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))),
+      (error) => {
+        console.error("Error al cargar la caja:", error);
+        toast.mostrar("No se pudo leer la caja. Revisá las Reglas de Firestore.", "error");
+        setVentas([]);
+      },
     );
-    if (!confirmar) return;
+  }, [toast]);
 
-    try {
-      setCargando(true);
+  const { porMesa, total, unidades, ranking } = useMemo(() => {
+    const porMesa = {};
+    const productos = {};
+    let total = 0;
+    let unidades = 0;
 
-      // 1. Traemos todos los documentos actuales de la colección "caja"
-      const querySnapshot = await getDocs(collection(db, "caja"));
-      
-      if (querySnapshot.empty) {
-        alert("La caja ya está vacía.");
-        return;
-      }
+    (ventas || []).forEach((v) => {
+      // precio_pedido ya es el TOTAL de la línea (precio unitario × cantidad)
+      const monto = Number(v.precio_pedido) || 0;
+      const cantidad = Number(v.cantidad_pedido) || 0;
+      porMesa[v.mesa] = (porMesa[v.mesa] || 0) + monto;
+      total += monto;
+      unidades += cantidad;
 
-      // 2. Usamos un Batch (lote) para borrar todos los documentos de forma eficiente y en una sola operación
-      const batch = writeBatch(db);
-      
-      querySnapshot.docs.forEach((documento) => {
-        const docRef = doc(db, "caja", documento.id);
-        batch.delete(docRef);
+      const nombre = v.nombre_pedido || "Sin nombre";
+      productos[nombre] = productos[nombre] || { nombre, cantidad: 0, monto: 0 };
+      productos[nombre].cantidad += cantidad;
+      productos[nombre].monto += monto;
+    });
+
+    const ranking = Object.values(productos)
+      .sort((a, b) => b.cantidad - a.cantidad)
+      .slice(0, 8);
+
+    return { porMesa, total, unidades, ranking };
+  }, [ventas]);
+
+  const exportarCSV = () => {
+    const filas = [["Fecha", "Mesa", "Producto", "Cantidad", "Total"]];
+    [...(ventas || [])]
+      .sort((a, b) => (a.fecha?.toMillis?.() ?? 0) - (b.fecha?.toMillis?.() ?? 0))
+      .forEach((v) => {
+        const fecha = v.fecha?.toDate?.().toLocaleString("es-AR") ?? "";
+        filas.push([fecha, v.mesa, v.nombre_pedido, v.cantidad_pedido, v.precio_pedido]);
       });
 
-      // 3. Impactamos los borrados en Firebase
-      await batch.commit();
+    const texto = filas
+      .map((fila) => fila.map((c) => `"${String(c ?? "").replaceAll('"', '""')}"`).join(";"))
+      .join("\n");
+    const blob = new Blob(["\ufeff" + texto], { type: "text/csv;charset=utf-8" });
+    const enlace = document.createElement("a");
+    enlace.href = URL.createObjectURL(blob);
+    enlace.download = `caja-${new Date().toISOString().slice(0, 10)}.csv`;
+    enlace.click();
+    URL.revokeObjectURL(enlace.href);
+  };
 
-      alert("Historial de caja eliminado de Firebase exitosamente.");
-      setVentas([]); // Vaciamos el estado local de la app
+  const vaciarCaja = async () => {
+    if (!ventas || ventas.length === 0) return;
+    const ok = window.confirm(
+      "¿Cerrar la caja? Se BORRARÁ todo el historial de ventas y no se puede deshacer.\n\nTip: exportá el CSV antes de continuar.",
+    );
+    if (!ok) return;
+
+    setBorrando(true);
+    try {
+      for (let i = 0; i < ventas.length; i += LOTE_MAXIMO) {
+        const lote = writeBatch(db);
+        ventas.slice(i, i + LOTE_MAXIMO).forEach((v) => lote.delete(doc(db, "caja", v.id)));
+        await lote.commit();
+      }
+      toast.mostrar("Caja cerrada: historial eliminado.", "ok");
     } catch (error) {
-      console.error("Error al eliminar la caja:", error);
-      alert(
-        "No se pudo eliminar el historial. Comprobá las Reglas de Seguridad (Rules) para permisos de DELETE en Firebase.",
-      );
+      console.error("Error al vaciar la caja:", error);
+      toast.mostrar("No se pudo vaciar la caja. Revisá los permisos de borrado.", "error");
     } finally {
-      setCargando(false);
+      setBorrando(false);
     }
   };
 
-  // Formateador de moneda argentina
-  const formatearDinero = (valor) =>
-    new Intl.NumberFormat("es-AR", {
-      style: "currency",
-      currency: "ARS",
-    }).format(valor);
-
-  if (cargando)
-    return (
-      <p style={{ textAlign: "center", marginTop: "5px" }}>
-        Procesando datos de caja...
-      </p>
-    );
+  if (ventas === null) return <div className="spinner" aria-label="Cargando" />;
 
   return (
-    <div className="administracion-container">
-      <header className="superior">
-        <h1>TU BAR - Panel de Control</h1>
+    <>
+      <header className="admin-titulo">
+        <h1>Caja</h1>
+        <div className="acciones-fila">
+          <button className="btn btn-outline" onClick={exportarCSV} disabled={ventas.length === 0}>
+            ⬇️ Exportar CSV
+          </button>
+          <button className="btn btn-danger" onClick={vaciarCaja} disabled={ventas.length === 0 || borrando}>
+            {borrando ? "Borrando…" : "Cerrar caja"}
+          </button>
+        </div>
       </header>
 
-      <div className="contenedor-mesas">
-        {Array.from({ length: 13 }, (_, i) => {
-          const numeroMesa = i + 1; 
-          const total = totalesPorMesa[numeroMesa] || 0;
+      <section className="kpis">
+        <div className="card kpi kpi-principal">
+          <span className="kpi-label">Total general</span>
+          <strong className="kpi-valor">{formatearDinero(total)}</strong>
+        </div>
+        <div className="card kpi">
+          <span className="kpi-label">Unidades vendidas</span>
+          <strong className="kpi-valor">{unidades}</strong>
+        </div>
+      </section>
 
-          return (
-            <div key={numeroMesa} className="subContenedor">
-              <span className="nombre">MESA {numeroMesa}:</span>
-              <span className="totalmesa">{formatearDinero(total)}</span>
-            </div>
-          );
-        })}
+      <h2 className="subtitulo">Por mesa</h2>
+      <div className="caja-mesas">
+        {MESAS.map((num) => (
+          <div key={num} className={`card caja-mesa ${porMesa[num] ? "" : "caja-mesa-vacia"}`}>
+            <span className="texto-suave">Mesa {num}</span>
+            <strong>{formatearDinero(porMesa[num] || 0)}</strong>
+          </div>
+        ))}
       </div>
 
-      <div className="contFinal">
-        <p className="totalTexto">TOTAL GENERAL:</p>
-        <p className="totalNum">{formatearDinero(totalFinal)}</p>
-      </div>
-
-      <div style={{ textAlign: "center", marginTop: "20px" }}>
-        <button className="boton-eliminar" onClick={eliminarHistorialCaja}>
-          Eliminar Historial de Caja
-        </button>
-      </div>
-    </div>
+      {ranking.length > 0 && (
+        <>
+          <h2 className="subtitulo">Lo más vendido</h2>
+          <section className="card ranking">
+            {ranking.map((p, i) => (
+              <div key={p.nombre} className="ranking-fila">
+                <span className="ranking-pos">{i + 1}</span>
+                <span className="ranking-nombre">{p.nombre}</span>
+                <span className="texto-suave">{p.cantidad} u.</span>
+                <strong>{formatearDinero(p.monto)}</strong>
+              </div>
+            ))}
+          </section>
+        </>
+      )}
+    </>
   );
 }
-
-export default Administracion;

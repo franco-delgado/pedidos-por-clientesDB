@@ -1,298 +1,106 @@
-/* CONTAINER GENERAL (Asegura que todo el editor esté centrado) */
-.editor-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center; /* Centra el contenido horizontalmente */
-  width: 100%;
-  max-width: 600px; /* Evita que los inputs se estiren al infinito */
-  margin: 0 auto;   /* Centra el contenedor en la pantalla */
-  padding: 20px;
-  box-sizing: border-box;
+/* ==========================================================================
+   ADMINISTRACIÓN — navegación, mesas, editor de productos y caja
+   ========================================================================== */
+
+/* ---------- Navegación por pestañas ---------- */
+.admin-nav {
+  display: flex; gap: 6px; padding: 5px; margin-bottom: 22px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+  overflow-x: auto;
+}
+.admin-tab {
+  position: relative; flex: 1; text-align: center; white-space: nowrap;
+  padding: 10px 16px; border-radius: 10px;
+  color: var(--text-dim); text-decoration: none; font-weight: 700;
+}
+.admin-tab:hover { color: var(--text); }
+.admin-tab.active { background: var(--accent); color: var(--accent-ink); }
+.admin-tab-badge {
+  margin-left: 8px; padding: 1px 8px; border-radius: 999px;
+  background: var(--danger); color: #fff; font-size: 0.75rem;
+  animation: latido 1.4s infinite;
+}
+@keyframes latido { 50% { transform: scale(1.18); } }
+
+.subtitulo { margin: 26px 0 12px; font-size: 1.1rem; }
+
+/* ---------- Mesas ---------- */
+.grid-mesas { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+@media (min-width: 560px) { .grid-mesas { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 860px) { .grid-mesas { grid-template-columns: repeat(4, 1fr); } }
+
+.mesa-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+  padding: 16px; min-height: 120px; text-align: left;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-left-width: 6px; border-radius: var(--radius);
+  font: inherit; cursor: pointer;
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+.mesa-card:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
+.mesa-num { font-family: var(--font-display); font-size: 1.25rem; font-weight: 700; }
+.mesa-estado { font-size: 0.85rem; font-weight: 700; }
+.mesa-total { margin-top: auto; font-weight: 800; font-size: 1.05rem; display: flex; flex-direction: column; }
+.mesa-total small { font-weight: 500; color: var(--text-dim); font-size: 0.75rem; }
+.mesa-total-vacio { color: var(--text-dim); font-weight: 400; }
+
+.mesa-libre { border-left-color: var(--ok); }
+.mesa-libre .mesa-estado { color: #7fd6a0; }
+.mesa-ocupada { border-left-color: var(--warn); background: #2b2316; }
+.mesa-ocupada .mesa-estado { color: #f0c066; }
+.mesa-pedido_nuevo { border-left-color: var(--danger); background: #35191a; animation: alerta-mesa 1.4s ease-in-out infinite alternate; }
+.mesa-pedido_nuevo .mesa-estado { color: #f38a7f; }
+@keyframes alerta-mesa { to { background: #4a2022; box-shadow: 0 0 0 3px rgba(226, 87, 74, 0.35); } }
+
+/* ---------- Editor de productos ---------- */
+.ed-lista { display: flex; flex-direction: column; gap: 12px; padding-bottom: 90px; }
+.ed-fila { display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: start; }
+
+.ed-foto { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.ed-foto img, .ed-foto > span {
+  width: 72px; height: 72px; border-radius: 12px; object-fit: cover;
+  background: var(--surface-2); border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center; font-size: 1.5rem;
+}
+.ed-file { display: none; }
+.ed-foto-btn {
+  padding: 3px 12px; border-radius: 8px; cursor: pointer;
+  background: var(--surface-2); border: 1px solid var(--border);
+  font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
+}
+.ed-foto-btn:hover { border-color: var(--accent); color: var(--accent-hover); }
+
+.ed-campos { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ed-numeros { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+.barra-guardar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 25;
+  display: flex; justify-content: center;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  background: rgba(21, 17, 14, 0.92); backdrop-filter: blur(10px);
+  border-top: 1px solid var(--border);
 }
 
-/* HEADER DEL EDITOR */
-.superior {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  margin-bottom: 20px;
-}
+/* ---------- Caja ---------- */
+.kpis { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; }
+.kpi { display: flex; flex-direction: column; gap: 4px; }
+.kpi-label { color: var(--text-dim); font-size: 0.85rem; }
+.kpi-valor { font-family: var(--font-display); font-size: 1.7rem; }
+.kpi-principal .kpi-valor { color: var(--accent-hover); font-size: 2.1rem; }
 
-/* CONTENEDOR PRINCIPAL DEL FORMULARIO */
-.formulario-edicion {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 15px; /* Espacio uniforme entre un producto y otro */
-  background: rgba(255, 255, 255, 0.05); /* Un fondo sutil para separar productos */
-  padding: 15px;
-  border-radius: 8px;
-  box-sizing: border-box;
-}
+.caja-mesas { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+@media (min-width: 560px) { .caja-mesas { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 860px) { .caja-mesas { grid-template-columns: repeat(4, 1fr); } }
+.caja-mesa { display: flex; flex-direction: column; padding: 14px; }
+.caja-mesa strong { font-size: 1.1rem; }
+.caja-mesa-vacia { opacity: 0.5; }
 
-/* CADA FILA DE PRODUCTO */
-.item-editar {
-  display: flex;
-  flex-direction: row;      /* Los inputs se alinean horizontalmente en la fila */
-  align-items: flex-end;    /* Alinea los inputs y el tacho de basura por abajo */
-  justify-content: center;  /* Centra los elementos de la fila */
-  gap: 12px;                /* Espaciado interno entre los inputs */
-  width: 100%;
+.ranking { padding: 6px 18px; }
+.ranking-fila { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.ranking-fila:last-child { border-bottom: none; }
+.ranking-pos {
+  width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
+  background: var(--surface-2); color: var(--accent-hover);
+  display: inline-flex; align-items: center; justify-content: center; font-size: 0.8rem; font-weight: 800;
 }
-
-
-/* 3. GRUPO ESTÁNDAR (Para el campo de Producto/Nombre) */
-.input-group {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  flex: 2;                  /* Le da más espacio relativo al nombre que a los números */
-}
-.input-group label {
-  font-size: 0.85rem;
-  color: #b3b3b3;
-  margin-bottom: 6px;
-}
-
-/* 4. GRUPO CORTO (Agrega estas clases que faltaban para Stock y Precio) */
-.input-group-corto {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  flex: 1;                  /* Espacio balanceado para los campos numéricos */
-  min-width: 70px;          /* Evita que se encojan de más */
-}
-.input-group-corto label {
-  font-size: 0.85rem;
-  color: #b3b3b3;
-  margin-bottom: 6px;
-}
-.input-group-corto input {
-  width: 100%;
-  padding: 8px 6px;
-  background-color: #222;
-  border: 1px solid #444;
-  border-radius: 4px;
-  color: #fff;
-  font-size: 1rem;
-  box-sizing: border-box;
-  text-align: center;       /* Centra los números para mejorar la estética */
-}
-.input-group-corto input:focus {
-  border-color: #007bff;
-  outline: none;
-}
-
-
-
-/* Grupo específico para la columna de la foto */
-.input-group-foto {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.input-group-foto label {
-  font-size: 0.75rem;
-  color: #b3b3b3;
-  margin-bottom: 4px;
-}
-/* Contenedor miniatura + botón */
-.contenedor-foto-preview {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-}
-/* Miniatura de la imagen */
-.foto-preview, .sin-foto {
-  width: 45px;
-  height: 45px;
-  border-radius: 6px;
-  object-fit: cover;
-  border: 1px solid #444;
-}
-.sin-foto {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background-color: #222;
-  font-size: 1.2rem;
-  color: #666;
-}
-/* Ocultamos el input nativo horrible de "Elegir archivo" */
-.input-file-oculto {
-  display: none;
-}
-
-/* Botón personalizado simulado sobre el label */
-.btn-subir-foto {
-  font-size: 0.65rem !important;
-  background-color: #333;
-  color: #fff !important;
-  padding: 2px 6px;
-  border-radius: 4px;
-  cursor: pointer;
-  border: 1px solid #555;
-  text-transform: uppercase;
-}
-
-.btn-subir-foto:hover {
-  background-color: #444;
-}
-/* ESTILO DE LOS INPUTS */
-.input-group input {
-  width: 100%;
-  padding: 8px 12px;
-  background-color: #222;   /* Fondo oscuro para hacer juego con tu app */
-  border: 1px solid #444;
-  border-radius: 4px;
-  color: #fff;
-  font-size: 1rem;
-  box-sizing: border-box;
-}
-
-.input-group input:focus {
-  border-color: #007bff;    /* Color de foco azul (o el de tu marca) */
-  outline: none;
-}
-
-/* BOTÓN ELIMINAR (Tacho) */
-.btn-eliminar {
-  background: none;
-  border: none;
-  font-size: 1.2rem;
-  cursor: pointer;
-  padding: 8px;
-  margin-bottom: 2px;       /* Lo alinea visualmente con la base de los inputs */
-  transition: transform 0.2s;
-}
-
-.btn-eliminar:hover {
-  transform: scale(1.15);
-}
-
-/* CONTROLES INFERIORES (Guardar todo) */
-.footer-controles {
-  margin-top: 25px;
-  display: flex;
-  justify-content: center;
-  width: 100%;
-}
-
-.btn-guardar-todo {
-  padding: 10px 20px;
-  cursor: pointer;
-}
-
-
-
-/*
-
-PEDIDOS
-
-*/
-.admin-page {
-  padding: 20px;
-  font-family: Arial, sans-serif;
-  background-color: #1a1a1a;
-  color: white;
-  min-height: 100vh;
-}
-
-.superior {
-  text-align: center;
-  margin-bottom: 30px;
-}
-
-.grid-mesas {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 15px;
-  justify-content: center;
-  max-width: 1000px;
-  margin: 0 auto;
-}
-
-.contenedor-mesa {
-  padding: 20px;
-  border-radius: 8px;
-  cursor: pointer;
-  text-align: center;
-  color: white;
-  width: 130px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-.contenedor-mesa:hover {
-  transform: scale(1.05);
-  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.5);
-}
-
-.texto-estado {
-  font-size: 0.9em;
-  margin-top: 10px;
-  font-weight: bold;
-}
-
-/* --- LOS 3 ESTADOS VISUALES --- */
-
-/* 1. MESA LIBRE: Sin consumos (Verde) */
-.libre {
-  background-color: #2ecc71; 
-}
-
-/* 2. MESA OCUPADA: Consumiendo actualmente (Naranja / Amarillo oscuro) */
-.ocupada {
-  background-color: #f39c12; 
-}
-
-/* 3. MESA SOLICITÓ CUENTA: Alerta crítica (Rojo parpadeante o fijo) */
-.cuenta {
-  background-color: #e74c3c; 
-  animation: pulso-alerta 1.5s infinite alternate;
-}
-
-@keyframes pulso-alerta {
-  from { background-color: #e74c3c; }
-  to { background-color: #c0392b; }
-}
-
-
-
-/*PRECIOS*/
-.cuerpo {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-}
-.opciones {
-  width: auto;
-  margin: 10px;
-  cursor: pointer;
-}
-
-/*PEDIDOS*/
-.alerta-activa {
-  animation: parpadeo 1.5s infinite;
-  border: 3px solid white;
-}
-
-@keyframes parpadeo {
-  0% { opacity: 1; }
-  50% { opacity: 0.7; }
-  100% { opacity: 1; }
-}
-
-.badge-aviso {
-  background: white;
-  color: red;
-  font-weight: bold;
-  padding: 5px;
-  border-radius: 5px;
-  font-size: 0.8rem;
-}
+.ranking-nombre { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

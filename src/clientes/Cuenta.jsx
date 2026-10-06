@@ -1,151 +1,96 @@
-import React, { useState, useEffect } from "react";
-// Importamos la instancia de la base de datos de tu archivo de configuración de Firebase
-import { db } from "../lib/firebise"; 
-// Importamos las funciones necesarias de Firestore
-import { collection, query, where, getDocs, addDoc } from "firebase/firestore";
-import FooterComponent from "../FooterComponent";
-import "./Clientes.css";
+import { useEffect, useState } from "react";
+import { Link, useOutletContext } from "react-router-dom";
+import { addDoc, collection, onSnapshot, query, where } from "firebase/firestore";
+import { db } from "../lib/firebase";
+import { COLECCION_PEDIDOS, SOLICITUD_CUENTA, formatearDinero, normalizarPedido } from "../lib/pedidos";
+import { useToast } from "../hooks/toastContext";
 
-function Cuenta({ mesa, alVolver }) {
-  const [productosPedidos, setProductosPedidos] = useState([]);
-  const [cargando, setCargando] = useState(true);
+export default function Cuenta() {
+  const { mesa, carrito } = useOutletContext();
+  const toast = useToast();
 
+  const [pedidos, setPedidos] = useState(null); // null = cargando
+  const [enviando, setEnviando] = useState(false);
+
+  // Sólo se leen los pedidos de ESTA mesa, y se actualizan en vivo
   useEffect(() => {
-    const obtenerConsumoMesa = async () => {
-      try {
-        const coleccionRef = collection(db, "pedidos_clientes");
-        // Creamos la consulta equivalente a .eq("mesa", mesa)
-        // Aseguramos que 'mesa' sea evaluado como número
-        const consulta = query(coleccionRef, where("mesa", "==", Number(mesa)));
-        const snapshot = await getDocs(consulta);
-
-        const data = snapshot.docs.map((doc) => {
-          const item = doc.data();
-          return {
-            id: doc.id,
-            mesa: item.mesa,
-            // Soporte dinámico para guión bajo o medio
-            nombre_pedido: item["nombre_pedido"] || item["nombre-pedido"] || "",
-            precio_unitario: item.precio_unitario || 0,
-            cantidad_pedida: item["cantidad_pedida"] || item["cantidad-pedida"] || 1,
-            espacio: item.espacio
-          };
-        });
-
-        // Filtramos para no meter la propia solicitud de cuenta como un "plato cobrable" en el ticket
-        const consumosReales = data.filter(p => p.nombre_pedido !== "SOLICITUD DE CUENTA");
-
-        setProductosPedidos(consumosReales);
-      } catch (error) {
-        console.error("Error al obtener la cuenta de Firestore:", error);
-      } finally {
-        setCargando(false);
-      }
-    };
-
-    obtenerConsumoMesa();
+    const consulta = query(collection(db, COLECCION_PEDIDOS), where("mesa", "==", mesa));
+    return onSnapshot(
+      consulta,
+      (snapshot) => setPedidos(snapshot.docs.map((d) => normalizarPedido(d.id, d.data()))),
+      (error) => {
+        console.error("Error al obtener la cuenta:", error);
+        setPedidos([]);
+      },
+    );
   }, [mesa]);
 
-  const calcularTotal = () => {
-    return productosPedidos.reduce((acc, item) => {
-      const cantidad = item.cantidad_pedida;
-      return acc + item.precio_unitario * cantidad;
-    }, 0);
-  };
+  const consumos = (pedidos || []).filter((p) => !p.esCuenta);
+  const cuentaSolicitada = (pedidos || []).some((p) => p.esCuenta);
+  const total = consumos.reduce((acc, p) => acc + p.subtotal, 0);
 
-  const gestionarPedirCuenta = async () => {
+  const pedirCuenta = async () => {
+    setEnviando(true);
     try {
-      // 1. Borrar datos guardados en la caché del navegador
-      localStorage.clear(); 
-      sessionStorage.clear(); 
-
-      // 2. Enviar mensaje/alerta insertando un nuevo documento en Firestore
-      const coleccionRef = collection(db, "pedidos_clientes");
-      await addDoc(coleccionRef, {
-        mesa: Number(mesa),
-        nombre_pedido: "SOLICITUD DE CUENTA",
+      await addDoc(collection(db, COLECCION_PEDIDOS), {
+        mesa,
+        nombre_pedido: SOLICITUD_CUENTA,
         precio_unitario: 0,
         cantidad_pedida: 1,
-        espacio: "pedido_nuevo" // Campo clave para gatillar la alerta visual/sonora del administrador
+        espacio: "pedido_nuevo", // dispara la alerta visual y sonora de administración
+        creado: new Date(),
       });
-
-      // 3. Mostrar el cartel de confirmación al cliente
-      alert("En un momento le entregamos la cuenta.");
-
-      // Redirigir al menú o recargar la pantalla tras pedir la cuenta
-      alVolver();
+      carrito.vaciar();
+      toast.mostrar("En un momento le entregamos la cuenta.", "ok");
     } catch (error) {
-      console.error("Error al solicitar la cuenta:", error.message);
-      alert(
-        "Hubo un problema al solicitar la cuenta. Por favor, avise a un mozo."
-      );
+      console.error("Error al solicitar la cuenta:", error);
+      toast.mostrar("No se pudo pedir la cuenta. Avisá a un mozo.", "error");
+    } finally {
+      setEnviando(false);
     }
   };
 
-  if (cargando) {
-    return <div className="cuenta-cargando">Cargando cuenta...</div>;
-  }
-
   return (
-    <div className="cuenta-layout">
-      <div className="cuenta-contenedor">
-        <button onClick={alVolver} className="btn-volver">
-          ← Volver al Menú
-        </button>
+    <>
+      <Link to={`/clientes/${mesa}`} className="volver">← Volver al menú</Link>
+      <header className="seccion-titulo">
+        <span aria-hidden="true">🧾</span>
+        <h1>Mi cuenta · Mesa {mesa}</h1>
+      </header>
 
-        <header className="cuenta-header">
-          <h2>Resumen de Cuenta - Mesa {mesa}</h2>
-        </header>
+      {pedidos === null && <div className="spinner" aria-label="Cargando" />}
 
-        <main className="cuenta-principal">
-          {productosPedidos.length === 0 ? (
-            <p className="cuenta-vacia">
-              Aún no has realizado ningún pedido en esta mesa.
-            </p>
-          ) : (
-            <>
-              <div className="ticket-contenedor">
-                {productosPedidos.map((item) => (
-                  <div key={item.id} className="ticket-item">
-                    <div className="item-detalles">
-                      <span className="item-nombre">{item.nombre_pedido}</span>
-                      {item.cantidad_pedida > 1 && (
-                        <span className="item-cantidad">
-                          {" "}x{item.cantidad_pedida}
-                        </span>
-                      )}
-                    </div>
-                    <span className="item-precio">
-                      $
-                      {(
-                        item.precio_unitario * item.cantidad_pedida
-                      ).toLocaleString()}
-                    </span>
-                  </div>
-                ))}
+      {pedidos !== null && consumos.length === 0 && (
+        <div className="card estado-vacio">Todavía no hay pedidos en esta mesa.</div>
+      )}
 
-                <div className="ticket-total">
-                  <span>TOTAL:</span>
-                  <span className="total-monto">
-                    ${calcularTotal().toLocaleString()}
-                  </span>
-                </div>
+      {consumos.length > 0 && (
+        <section className="card ticket">
+          {consumos.map((p) => (
+            <div key={p.id} className="ticket-fila">
+              <div>
+                <span className="ticket-nombre">{p.nombre}</span>
+                {p.cantidad > 1 && <span className="texto-suave"> × {p.cantidad}</span>}
               </div>
+              <span>{formatearDinero(p.subtotal)}</span>
+            </div>
+          ))}
+          <div className="fila-total">
+            <span>Total</span>
+            <strong>{formatearDinero(total)}</strong>
+          </div>
+        </section>
+      )}
 
-              <button onClick={gestionarPedirCuenta} className="btn-pedir-cuenta">
-                🛎️ PEDIR CUENTA
-              </button>
-            </>
-          )}
-        </main>
-      </div>
-      
-      {/* FooterComponent integrado correctamente dentro del flujo JSX */}
-      <div className="footer">
-        <FooterComponent />
-      </div>
-    </div>
+      {cuentaSolicitada ? (
+        <div className="aviso aviso-ok">✅ Cuenta solicitada. En un momento se acerca un mozo.</div>
+      ) : (
+        consumos.length > 0 && (
+          <button className="btn btn-primary btn-block btn-grande" onClick={pedirCuenta} disabled={enviando}>
+            {enviando ? "Enviando…" : "🛎️ Pedir la cuenta"}
+          </button>
+        )
+      )}
+    </>
   );
 }
-
-export default Cuenta;

@@ -1,347 +1,142 @@
-import React, { useState, useEffect } from "react";
-// Importamos la instancia de la base de datos de tu configuración de Firebase
-import { db } from "../lib/firebise"; 
-// Importamos los métodos requeridos de Firestore
-import { collection, query, where, getDocs, doc, addDoc, updateDoc } from "firebase/firestore";
-import FooterComponent from "../FooterComponent";
-import "./Clientes.css";
+import { useEffect, useState } from "react";
+import { Link, useOutletContext, useParams } from "react-router-dom";
+import { collection, onSnapshot, query, where } from "firebase/firestore";
+import { db } from "../lib/firebase";
+import { buscarCategoria, claveCategoria } from "../config";
+import { formatearDinero } from "../lib/pedidos";
+import { useToast } from "../hooks/toastContext";
 
-function OpcionesPedidos({ categoria, alVolver }) {
-  const [productos, setProductos] = useState([]);
-  const [cargando, setCargando] = useState(true);
+export default function OpcionesPedidos() {
+  const { idCategoria } = useParams();
+  const { mesa, carrito } = useOutletContext();
+  const toast = useToast();
 
-  // --- ESTADOS PARA EL CARRITO Y EL MODAL ---
-  const [pedidos, setPedidos] = useState(() => {
-    const guardado = localStorage.getItem("carrito_mesa");
-    return guardado ? JSON.parse(guardado) : [];
-  });
+  const categoria = buscarCategoria(idCategoria);
+  const clave = categoria ? claveCategoria(categoria) : null;
 
-  const [productoSeleccionado, setProductoSeleccionado] = useState(null);
-  const [cantidadPedido, setCantidadPedido] = useState("");
-  const [mostrarCarrito, setMostrarCarrito] = useState(false);
+  // `clave` indica a qué categoría pertenece la lista: mientras no coincida, se muestra "cargando"
+  const [datos, setDatos] = useState({ clave: null, lista: [], error: false });
+  const [busqueda, setBusqueda] = useState("");
 
-  // Persistencia en LocalStorage
+  // Escucha en vivo: si cambia el stock, la tarjeta se actualiza sola
   useEffect(() => {
-    localStorage.setItem("carrito_mesa", JSON.stringify(pedidos));
-  }, [pedidos]);
-
-  // Cargar Productos de la Categoría desde Firestore
-  useEffect(() => {
-    async function obtenerProductos() {
-      try {
-        setCargando(true);
-        const coleccionRef = collection(db, "datos");
-        const consulta = query(
-          coleccionRef, 
-          where("categoria", "==", categoria.nombre.toUpperCase())
-        );
-        const snapshot = await getDocs(consulta);
-        
-        const data = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-
-        setProductos(data);
-      } catch (error) {
-        console.error("Error al cargar productos de Firestore:", error);
-      } finally {
-        setCargando(false);
-      }
-    }
-    obtenerProductos();
-  }, [categoria.nombre]);
-
-  // --- FUNCIONES DEL MODAL ---
-  const abrirModal = (producto) => {
-    const enCarrito =
-      pedidos.find((p) => p.id_producto === producto.id)?.cantidad || 0;
-    const disponibleReal = producto.stock - enCarrito;
-
-    if (disponibleReal <= 0) {
-      alert("Lo sentimos, no queda más stock disponible de este producto.");
-      return;
-    }
-
-    setProductoSeleccionado({ ...producto, disponibleReal });
-    setCantidadPedido("1");
-  };
-
-  const cerrarModal = () => {
-    setProductoSeleccionado(null);
-    setCantidadPedido("");
-  };
-
-  const agregarAlPedido = () => {
-    const cantidadAAgregar = parseInt(cantidadPedido);
-    if (!cantidadAAgregar || cantidadAAgregar <= 0) return;
-
-    if (cantidadAAgregar > productoSeleccionado.disponibleReal) {
-      alert(
-        `Solo puedes agregar ${productoSeleccionado.disponibleReal} unidades más.`,
-      );
-      return;
-    }
-
-    const existe = pedidos.find(
-      (p) => p.id_producto === productoSeleccionado.id,
+    if (!clave) return;
+    const consulta = query(collection(db, "datos"), where("categoria", "==", clave));
+    return onSnapshot(
+      consulta,
+      (snapshot) => {
+        const lista = snapshot.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), "es"));
+        setDatos({ clave, lista, error: false });
+      },
+      (error) => {
+        console.error("Error al cargar productos:", error);
+        setDatos({ clave, lista: [], error: true });
+      },
     );
+  }, [clave]);
 
-    if (existe) {
-      setPedidos(
-        pedidos.map((p) =>
-          p.id_producto === productoSeleccionado.id
-            ? {
-                ...p,
-                cantidad: p.cantidad + cantidadAAgregar,
-                subtotal: (p.cantidad + cantidadAAgregar) * p.precio_unitario,
-              }
-            : p,
-        ),
-      );
-    } else {
-      const nuevoItem = {
-        id_producto: productoSeleccionado.id,
-        nombre: productoSeleccionado.nombre,
-        cantidad: cantidadAAgregar,
-        precio_unitario: productoSeleccionado.precio,
-        subtotal: productoSeleccionado.precio * cantidadAAgregar,
-        stock_original: productoSeleccionado.stock,
-      };
-      setPedidos([...pedidos, nuevoItem]);
-    }
-    cerrarModal();
-  };
+  const volver = (
+    <Link to={`/clientes/${mesa}`} className="volver">← Categorías</Link>
+  );
 
-  // --- FUNCIONES DEL CARRITO ---
-  const actualizarCantidadCarrito = (id_producto, delta) => {
-    setPedidos((prevPedidos) => {
-      return prevPedidos.map((item) => {
-        if (item.id_producto === id_producto) {
-          const nuevaCantidad = item.cantidad + delta;
-          if (nuevaCantidad < 1) return item;
-          if (nuevaCantidad > item.stock_original) {
-            alert(`Stock máximo alcanzado (${item.stock_original} unidades).`);
-            return item;
-          }
-          return {
-            ...item,
-            text: item.nombre,
-            cantidad: nuevaCantidad,
-            subtotal: nuevaCantidad * item.precio_unitario,
-          };
-        }
-        return item;
-      });
-    });
-  };
-
-  const eliminarDelCarrito = (index) => {
-    const nuevosPedidos = [...pedidos];
-    nuevosPedidos.splice(index, 1);
-    setPedidos(nuevosPedidos);
-    if (nuevosPedidos.length === 0) setMostrarCarrito(false);
-  };
-
-  // --- FINALIZAR PEDIDO (CARGA A BASE DE DATOS FIRESTORE) ---
-  const finalizarPedidoCompleto = async () => {
-    if (pedidos.length === 0) return;
-
-    try {
-      const coleccionPedidosRef = collection(db, "pedidos_clientes");
-
-      // 1. Guardar cada ítem del carrito en Firestore de forma paralela y eficiente
-      const promesasPedidos = pedidos.map((item) => {
-        return addDoc(coleccionPedidosRef, {
-          mesa: 8, // ID estático temporal según requerimiento de tu código original
-          nombre_pedido: item.nombre, 
-          cantidad_pedida: item.cantidad, 
-          precio_unitario: item.precio_unitario, 
-          espacio: "pedido_nuevo" 
-        });
-      });
-
-      await Promise.all(promesasPedidos);
-
-      // 2. Actualizar el stock remanente en la colección 'datos'
-      const promesasStock = pedidos.map((item) => {
-        const documentoProductoRef = doc(db, "datos", item.id_producto);
-        return updateDoc(documentoProductoRef, {
-          stock: item.stock_original - item.cantidad
-        });
-      });
-
-      await Promise.all(promesasStock);
-
-      // 3. Limpieza de interfaz y éxito
-      alert("¡Pedido enviado correctamente!");
-      setPedidos([]);
-      localStorage.removeItem("carrito_mesa");
-      setMostrarCarrito(false);
-      alVolver();
-    } catch (err) {
-      console.error("Error inesperado en el guardado de Firestore:", err);
-      alert("Ocurrió un error inesperado al enviar el pedido.");
-    }
-  };
-
-  if (cargando)
+  if (!categoria) {
     return (
-      <p className="cargando">Cargando productos de {categoria.nombre}...</p>
+      <>
+        {volver}
+        <div className="card estado-vacio">Esa categoría no existe.</div>
+      </>
     );
+  }
+
+  const cargando = datos.clave !== clave;
+  const filtro = busqueda.trim().toLowerCase();
+  const productos = datos.lista.filter((p) => String(p.nombre).toLowerCase().includes(filtro));
+
+  const agregar = (prod) => {
+    if ((Number(prod.stock) || 0) - carrito.cantidadDe(prod.id) <= 0) {
+      toast.mostrar("No queda más stock de este producto.", "error");
+      return;
+    }
+    carrito.agregar(prod, 1);
+  };
 
   return (
-    <div className="editor-container">
-      <header className="superior">
-        <button onClick={alVolver} className="btn-atras">
-          ← Atrás
-        </button>
-        <h2>{categoria?.nombre?.toUpperCase()}</h2>
+    <>
+      {volver}
+      <header className="seccion-titulo">
+        <span aria-hidden="true">{categoria.emoji}</span>
+        <h1>{categoria.nombre}</h1>
       </header>
 
-      <div className="formulario-edicion">
-        {productos.map((prod) => (
-          <div
-            key={prod.id}
-            className={`item-editar ${prod.stock <= 0 ? "sin-stock" : ""}`}
-          >
-            <div className="foto-producto-contenedor">
-              {prod.imagen_url ? (
-                <img
-                  src={prod.imagen_url}
-                  alt={prod.nombre}
-                  className="producto-foto-cliente"
-                  loading="lazy"
-                />
-              ) : (
-                <div className="producto-sin-foto">📸</div>
-              )}
-              {prod.stock <= 0 && (
-                <span className="badge-sin-stock">Sin stock</span>
-              )}
-            </div>
+      {datos.lista.length > 6 && (
+        <input
+          className="input buscador"
+          type="search"
+          placeholder="Buscar producto…"
+          value={busqueda}
+          onChange={(e) => setBusqueda(e.target.value)}
+        />
+      )}
 
-            <div className="info-producto-menu">
-              <p className="nombre-producto-menu">{prod.nombre}</p>
-              <div className="fila-precio-stock">
-                <span className="precio-producto">${prod.precio}</span>
-                {prod.stock > 0 && (
-                  <span className="stock-producto">Stock: {prod.stock}</span>
+      {cargando && <div className="spinner" aria-label="Cargando" />}
+      {!cargando && datos.error && (
+        <div className="card estado-vacio">No se pudieron cargar los productos.</div>
+      )}
+      {!cargando && !datos.error && productos.length === 0 && (
+        <div className="card estado-vacio">
+          {datos.lista.length === 0 ? "Todavía no hay productos en esta categoría." : "Sin resultados."}
+        </div>
+      )}
+
+      <div className="productos-grid">
+        {productos.map((prod) => {
+          const stock = Number(prod.stock) || 0;
+          const enCarrito = carrito.cantidadDe(prod.id);
+          const disponible = stock - enCarrito;
+          const sinStock = stock <= 0;
+
+          return (
+            <article key={prod.id} className={`producto ${sinStock ? "sin-stock" : ""}`}>
+              <div className="producto-foto">
+                {prod.imagen_url ? (
+                  <img src={prod.imagen_url} alt={prod.nombre} loading="lazy" />
+                ) : (
+                  <span className="producto-sin-foto" aria-hidden="true">{categoria.emoji}</span>
+                )}
+                {sinStock && <span className="badge badge-danger producto-badge">Sin stock</span>}
+                {!sinStock && stock <= 5 && (
+                  <span className="badge badge-warn producto-badge">Quedan {stock}</span>
                 )}
               </div>
-            </div>
 
-            <button
-              className="btn-agregar-producto"
-              onClick={() => abrirModal(prod)}
-              disabled={prod.stock <= 0}
-            >
-              {prod.stock <= 0 ? "Sin stock" : "Agregar +"}
-            </button>
-          </div>
-        ))}
-      </div>
-
-      {/* Botón Flotante */}
-      {pedidos.length > 0 && (
-        <button
-          className="btn-carrito-flotante"
-          onClick={() => setMostrarCarrito(!mostrarCarrito)}
-        >
-          🛒 Ver Pedido ({pedidos.length})
-        </button>
-      )}
-
-      {/* Modal de Cantidad */}
-      {productoSeleccionado && (
-        <div className="modal-overlay">
-          <div className="modal-contenido">
-            <h3>{productoSeleccionado.nombre}</h3>
-            <p>Disponible: {productoSeleccionado.disponibleReal}</p>
-            <input
-              type="number"
-              min="1"
-              max={productoSeleccionado.disponibleReal}
-              value={cantidadPedido}
-              onChange={(e) => setCantidadPedido(e.target.value)}
-              autoFocus
-            />
-            <div className="modal-botones">
-              <button onClick={cerrarModal}>Cancelar</button>
-              <button className="btn-confirmar" onClick={agregarAlPedido}>
-                Agregar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Carrito Desplegable */}
-      {mostrarCarrito && (
-        <div className="carrito-desplegable">
-          <div className="carrito-header">
-            <h3>Mi Pedido</h3>
-            <button
-              className="btn-cerrar-x"
-              onClick={() => setMostrarCarrito(false)}
-            >
-              X
-            </button>
-          </div>
-          <div className="carrito-items">
-            {pedidos.map((item, idx) => (
-              <div key={item.id_producto} className="item-carrito-lista">
-                <div className="info-item">
-                  <strong>{item.nombre}</strong>
-                  <p>${item.precio_unitario}</p>
-                </div>
-                <div className="controles-cantidad">
-                  <button
-                    onClick={() =>
-                      actualizarCantidadCarrito(item.id_producto, -1)
-                    }
-                  >
-                    ◀
-                  </button>
-                  <span className="cantidad-numero">{item.cantidad}</span>
-                  <button
-                    onClick={() =>
-                      actualizarCantidadCarrito(item.id_producto, 1)
-                    }
-                  >
-                    ▶
-                  </button>
-                </div>
-                <div className="subtotal-item">
-                  <span>${item.subtotal}</span>
-                </div>
-                <button
-                  className="btn-eliminar"
-                  onClick={() => eliminarDelCarrito(idx)}
-                >
-                  🗑️
-                </button>
+              <div className="producto-info">
+                <p className="producto-nombre">{prod.nombre}</p>
+                <p className="producto-precio">{formatearDinero(prod.precio)}</p>
               </div>
-            ))}
-          </div>
-          <div className="carrito-footer">
-            <div className="total-contenedor">
-              <strong>Total:</strong>
-              <strong>
-                ${pedidos.reduce((acc, i) => acc + i.subtotal, 0)}
-              </strong>
-            </div>
-            <button className="btn-finalizar" onClick={finalizarPedidoCompleto}>
-              Confirmar Pedido
-            </button>
-          </div>
-        </div>
-      )}
-      <div className="footer">
-        <FooterComponent />
+
+              {enCarrito === 0 ? (
+                <button className="btn btn-primary btn-block" disabled={sinStock} onClick={() => agregar(prod)}>
+                  {sinStock ? "Sin stock" : "Agregar +"}
+                </button>
+              ) : (
+                <div className="stepper">
+                  <button aria-label="Quitar uno" onClick={() => carrito.cambiarCantidad(prod.id, -1, stock)}>−</button>
+                  <span>{enCarrito}</span>
+                  <button
+                    aria-label="Agregar uno"
+                    disabled={disponible <= 0}
+                    onClick={() => carrito.cambiarCantidad(prod.id, 1, stock)}
+                  >
+                    +
+                  </button>
+                </div>
+              )}
+            </article>
+          );
+        })}
       </div>
-    </div>
+    </>
   );
 }
-
-export default OpcionesPedidos;
