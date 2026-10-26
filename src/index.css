@@ -157,6 +157,7 @@ img { max-width: 100%; }
 .chip-nuevo { background: rgba(226, 87, 74, 0.16); border-color: rgba(226, 87, 74, 0.55); color: #f38a7f; }
 
 .badge { padding: 3px 9px; border-radius: 999px; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: #fff; }
+.badge-ok { background: var(--ok); color: #06210f; }
 .badge-danger { background: var(--danger); }
 .badge-warn { background: var(--warn); color: var(--accent-ink); }
 

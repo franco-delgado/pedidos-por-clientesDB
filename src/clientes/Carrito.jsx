@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { collection, doc, increment, serverTimestamp, writeBatch } from "firebase/firestore";
-import { db } from "../lib/firebase";
-import { COLECCION_PEDIDOS, formatearDinero } from "../lib/pedidos";
+import { collection, doc, increment, runTransaction, serverTimestamp } from "firebase/firestore";
+import { auth, db } from "../lib/firebase";
+import { COLECCION_PEDIDOS, COLECCION_SESIONES, formatearDinero } from "../lib/pedidos";
 import { useToast } from "../hooks/toastContext";
+
+class MesaOcupadaError extends Error {}
 
 export default function Carrito({ mesa, carrito, onCerrar }) {
   const navigate = useNavigate();
@@ -16,35 +18,52 @@ export default function Carrito({ mesa, carrito, onCerrar }) {
     setEnviando(true);
 
     try {
-      // Pedidos + descuento de stock en UNA sola operación: o se guarda todo o nada.
-      // increment() evita pisar el stock si dos mesas piden al mismo tiempo.
-      const lote = writeBatch(db);
+      const uid = auth.currentUser?.uid;
+      if (!uid) throw new Error("Sin sesión anónima");
       const notaLimpia = nota.trim();
 
-      carrito.items.forEach((item) => {
-        lote.set(doc(collection(db, COLECCION_PEDIDOS)), {
-          mesa,
-          id_producto: item.id_producto,
-          nombre_pedido: item.nombre,
-          cantidad_pedida: item.cantidad,
-          precio_unitario: item.precio_unitario,
-          espacio: "pedido_nuevo",
-          creado: serverTimestamp(),
-          ...(notaLimpia ? { nota: notaLimpia } : {}),
-        });
-        lote.update(doc(db, "datos", item.id_producto), { stock: increment(-item.cantidad) });
-      });
+      // Una sola transacción: verifica que la mesa sea de este dispositivo (o esté libre),
+      // la reclama si es el primer pedido, guarda los pedidos y descuenta el stock.
+      // Si otro celular reclamó la mesa un instante antes, no se guarda nada.
+      await runTransaction(db, async (tx) => {
+        const refSesion = doc(db, COLECCION_SESIONES, String(mesa));
+        const sesion = await tx.get(refSesion);
 
-      await lote.commit();
+        if (sesion.exists() && sesion.data().uid !== uid) throw new MesaOcupadaError();
+        if (!sesion.exists()) {
+          tx.set(refSesion, { uid, mesa, abierta: serverTimestamp() });
+        }
+
+        carrito.items.forEach((item) => {
+          tx.set(doc(collection(db, COLECCION_PEDIDOS)), {
+            mesa,
+            id_producto: item.id_producto,
+            nombre_pedido: item.nombre,
+            cantidad_pedida: item.cantidad,
+            precio_unitario: item.precio_unitario,
+            espacio: "pedido_nuevo",
+            creado: serverTimestamp(),
+            ...(notaLimpia ? { nota: notaLimpia } : {}),
+          });
+          // increment() evita pisar el stock si dos mesas piden al mismo tiempo
+          tx.update(doc(db, "datos", item.id_producto), { stock: increment(-item.cantidad) });
+        });
+      });
 
       carrito.vaciar();
       toast.mostrar("¡Pedido enviado! Ya lo estamos preparando.", "ok");
       onCerrar();
       navigate(`/clientes/${mesa}`);
     } catch (error) {
+      setEnviando(false);
+      if (error instanceof MesaOcupadaError) {
+        // La pantalla pasa sola al cartel "QR ya utilizado" por el listener de la sesión
+        toast.mostrar("Este QR ya está siendo utilizado.", "error");
+        onCerrar();
+        return;
+      }
       console.error("Error al enviar el pedido:", error);
       toast.mostrar("No se pudo enviar el pedido. Probá de nuevo o avisá a un mozo.", "error");
-      setEnviando(false);
     }
   };
 

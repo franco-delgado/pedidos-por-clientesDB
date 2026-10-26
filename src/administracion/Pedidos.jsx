@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { doc, writeBatch } from "firebase/firestore";
 import { db } from "../lib/firebase";
@@ -13,7 +13,7 @@ const ETIQUETAS = {
 
 export default function Pedidos() {
   const navigate = useNavigate();
-  const { pedidos, estadoMesas, cargando } = useOutletContext();
+  const { pedidos, estadoMesas, cargando, sesiones } = useOutletContext();
 
   // Total, cantidad de ítems y si pidió la cuenta, por mesa
   const resumen = useMemo(() => {
@@ -29,13 +29,22 @@ export default function Pedidos() {
     return r;
   }, [pedidos]);
 
+  // Una mesa con el QR en uso cuenta como ocupada aunque no tenga pedidos (se liberó el último ítem)
+  const estadoDe = useCallback(
+    (num) => {
+      const estado = estadoMesas[num] || ESTADO.LIBRE;
+      return estado === ESTADO.LIBRE && sesiones?.has(num) ? ESTADO.OCUPADA : estado;
+    },
+    [estadoMesas, sesiones],
+  );
+
   const conteo = useMemo(
     () => ({
-      libres: MESAS.filter((n) => estadoMesas[n] === ESTADO.LIBRE).length,
-      ocupadas: MESAS.filter((n) => estadoMesas[n] === ESTADO.OCUPADA).length,
+      libres: MESAS.filter((n) => estadoDe(n) === ESTADO.LIBRE).length,
+      ocupadas: MESAS.filter((n) => estadoDe(n) === ESTADO.OCUPADA).length,
       alertas: MESAS.filter((n) => estadoMesas[n] === ESTADO.NUEVO).length,
     }),
-    [estadoMesas],
+    [estadoMesas, estadoDe],
   );
 
   // Al abrir la mesa se "reconocen" los pedidos nuevos (dejan de ser alerta).
@@ -71,7 +80,7 @@ export default function Pedidos() {
       ) : (
         <div className="grid-mesas">
           {MESAS.map((num) => {
-            const estado = estadoMesas[num] || ESTADO.LIBRE;
+            const estado = estadoDe(num);
             const { total, items, pideCuenta } = resumen[num];
             return (
               <button key={num} className={`mesa-card mesa-${estado}`} onClick={() => abrirMesa(num)}>

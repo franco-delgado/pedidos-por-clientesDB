@@ -3,6 +3,7 @@ import { NavLink, Outlet } from "react-router-dom";
 import { MESAS } from "../config";
 import { ESTADO } from "../lib/pedidos";
 import { usePedidos } from "../hooks/usePedidos";
+import { useSesionesActivas } from "../hooks/useSesionesActivas";
 import { useAlertaSonora } from "../hooks/useAlertaSonora";
 import { useToast } from "../hooks/toastContext";
 import PinGate from "../components/PinGate";
@@ -36,6 +37,7 @@ function PanelAdmin() {
   );
 
   const { pedidos, estadoMesas, cargando, error } = usePedidos({ alNuevoPedido });
+  const sesiones = useSesionesActivas(); // mesas con el QR en uso
 
   useEffect(() => {
     if ("Notification" in window && Notification.permission === "default") {
@@ -63,7 +65,7 @@ function PanelAdmin() {
         </div>
       )}
 
-      <Outlet context={{ pedidos, estadoMesas, cargando }} />
+      <Outlet context={{ pedidos, estadoMesas, cargando, sesiones }} />
     </div>
   );
 }

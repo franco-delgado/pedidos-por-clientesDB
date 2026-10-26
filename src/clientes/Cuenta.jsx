@@ -1,29 +1,17 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, useOutletContext } from "react-router-dom";
-import { addDoc, collection, onSnapshot, query, where } from "firebase/firestore";
+import { addDoc, collection } from "firebase/firestore";
 import { db } from "../lib/firebase";
-import { COLECCION_PEDIDOS, SOLICITUD_CUENTA, formatearDinero, normalizarPedido } from "../lib/pedidos";
+import { COLECCION_PEDIDOS, SOLICITUD_CUENTA, formatearDinero } from "../lib/pedidos";
+import { usePedidosMesa } from "../hooks/usePedidosMesa";
 import { useToast } from "../hooks/toastContext";
 
 export default function Cuenta() {
   const { mesa, carrito } = useOutletContext();
   const toast = useToast();
 
-  const [pedidos, setPedidos] = useState(null); // null = cargando
+  const pedidos = usePedidosMesa(mesa); // null = cargando; sólo los de ESTA mesa, en vivo
   const [enviando, setEnviando] = useState(false);
-
-  // Sólo se leen los pedidos de ESTA mesa, y se actualizan en vivo
-  useEffect(() => {
-    const consulta = query(collection(db, COLECCION_PEDIDOS), where("mesa", "==", mesa));
-    return onSnapshot(
-      consulta,
-      (snapshot) => setPedidos(snapshot.docs.map((d) => normalizarPedido(d.id, d.data()))),
-      (error) => {
-        console.error("Error al obtener la cuenta:", error);
-        setPedidos([]);
-      },
-    );
-  }, [mesa]);
 
   const consumos = (pedidos || []).filter((p) => !p.esCuenta);
   const cuentaSolicitada = (pedidos || []).some((p) => p.esCuenta);

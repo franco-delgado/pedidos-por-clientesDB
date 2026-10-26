@@ -3,7 +3,7 @@ import { Link, useNavigate, useOutletContext, useParams } from "react-router-dom
 import { collection, doc, increment, writeBatch } from "firebase/firestore";
 import { db } from "../../lib/firebase";
 import { MESAS } from "../../config";
-import { COLECCION_PEDIDOS, formatearDinero, formatearHora } from "../../lib/pedidos";
+import { COLECCION_PEDIDOS, COLECCION_SESIONES, formatearDinero, formatearHora } from "../../lib/pedidos";
 import { useToast } from "../../hooks/toastContext";
 import { emitirImpresionMesa } from "../../impresora/ticketService";
 import "./DetallesMesa.css";
@@ -13,7 +13,7 @@ export default function DetalleMesa() {
   const mesa = Number(idMesa);
   const navigate = useNavigate();
   const toast = useToast();
-  const { pedidos, cargando } = useOutletContext();
+  const { pedidos, cargando, sesiones } = useOutletContext();
   const [procesando, setProcesando] = useState(false);
 
   // Los pedidos ya llegan en tiempo real desde el panel: acá sólo se filtra la mesa
@@ -67,6 +67,24 @@ export default function DetalleMesa() {
     }
   };
 
+  // Para una mesa con el QR en uso pero sin pedidos (se quitaron todos los ítems por error)
+  const liberarSinCobro = async () => {
+    if (!window.confirm(`¿Liberar la mesa ${mesa}? El QR podrá usarse de nuevo.`)) return;
+    setProcesando(true);
+    try {
+      const lote = writeBatch(db);
+      todos.forEach((item) => lote.delete(doc(db, COLECCION_PEDIDOS, item.id)));
+      lote.delete(doc(db, COLECCION_SESIONES, String(mesa)));
+      await lote.commit();
+      toast.mostrar(`Mesa ${mesa} liberada.`, "ok");
+      navigate("/administracion/mesas");
+    } catch (error) {
+      console.error("Error al liberar la mesa:", error);
+      toast.mostrar("No se pudo liberar la mesa.", "error");
+      setProcesando(false);
+    }
+  };
+
   // Cobro: registra en caja y vacía la mesa en una sola operación
   const cobrar = async () => {
     if (todos.length === 0) return;
@@ -87,6 +105,8 @@ export default function DetalleMesa() {
       });
       // También se borra la solicitud de cuenta (no se cobra ni va a caja)
       todos.forEach((item) => lote.delete(doc(db, COLECCION_PEDIDOS, item.id)));
+      // Libera el QR: la mesa vuelve a poder usarse desde cualquier celular
+      lote.delete(doc(db, COLECCION_SESIONES, String(mesa)));
 
       await lote.commit();
       toast.mostrar(`Mesa ${mesa} cobrada y liberada.`, "ok");
@@ -109,7 +129,17 @@ export default function DetalleMesa() {
       {cargando ? (
         <div className="spinner" aria-label="Cargando" />
       ) : consumos.length === 0 ? (
-        <div className="card estado-vacio">No hay pedidos pendientes para esta mesa.</div>
+        <div className="card estado-vacio">
+          <p>No hay pedidos pendientes para esta mesa.</p>
+          {sesiones?.has(mesa) && (
+            <>
+              <p className="texto-suave">El QR de esta mesa sigue en uso.</p>
+              <button className="btn btn-ok" onClick={liberarSinCobro} disabled={procesando}>
+                {procesando ? "Procesando…" : "Liberar mesa"}
+              </button>
+            </>
+          )}
+        </div>
       ) : (
         <section className="card detalle">
           {consumos.map((item) => (

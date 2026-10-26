@@ -1,6 +1,9 @@
 import { MESAS } from "../config";
 
 export const COLECCION_PEDIDOS = "pedidos_clientes";
+// Una "sesión" por mesa: indica qué dispositivo (uid anónimo) está usando el QR.
+// Se crea con el primer pedido y se borra al "Cobrar y liberar mesa".
+export const COLECCION_SESIONES = "mesas_sesion";
 export const SOLICITUD_CUENTA = "SOLICITUD DE CUENTA";
 
 export const ESTADO = Object.freeze({
